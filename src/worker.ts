@@ -2431,21 +2431,49 @@ Respond with a JSON object: { "requiresSearch": boolean }`;
 
 // 18. Runtime configuration endpoint
 app.get('/api/config', async (c) => {
+  const env = c.env || {} as any;
+  const envKeys = Object.keys(env);
+  
+  console.log('[ENV KEYS] Available bindings:', envKeys.join(', '));
+  
   const publicConfig: Record<string, string> = {};
   
-  // Extract all NEXT_PUBLIC_ variables from the environment
-  for (const [key, value] of Object.entries(c.env || {})) {
-    if (key.startsWith('NEXT_PUBLIC_') && typeof value === 'string') {
-      publicConfig[key] = value;
+  // 1. Try to extract all NEXT_PUBLIC_ variables
+  for (const key of envKeys) {
+    if (key.startsWith('NEXT_PUBLIC_') && typeof env[key] === 'string') {
+      publicConfig[key] = env[key];
     }
   }
 
-  console.log(`[CONFIG API] Returning ${Object.keys(publicConfig).length} public variables`);
+  // 2. Map critical Supabase variables with fallbacks
+  const supabaseUrl = env.NEXT_PUBLIC_SUPABASE_URL || env.SUPABASE_URL;
+  const supabaseAnonKey = env.NEXT_PUBLIC_SUPABASE_ANON_KEY || env.SUPABASE_ANON_KEY;
+
+  if (supabaseUrl) publicConfig['NEXT_PUBLIC_SUPABASE_URL'] = supabaseUrl;
+  if (supabaseAnonKey) publicConfig['NEXT_PUBLIC_SUPABASE_ANON_KEY'] = supabaseAnonKey;
+
+  const foundCount = Object.keys(publicConfig).length;
+  console.log(`[CONFIG API] Found ${foundCount} public variables. NEXT_PUBLIC_SUPABASE_URL: ${!!supabaseUrl ? 'FOUND' : 'MISSING'}`);
+
+  // 3. Validation
+  const missing: string[] = [];
+  if (!supabaseUrl) missing.push('NEXT_PUBLIC_SUPABASE_URL');
+  if (!supabaseAnonKey) missing.push('NEXT_PUBLIC_SUPABASE_ANON_KEY');
+
+  if (missing.length > 0) {
+    console.error(`[CONFIG BUILD] Missing variables: ${missing.join(', ')}`);
+    return c.json({
+      error: "Missing runtime configuration",
+      missing,
+      availableKeys: envKeys,
+      runtime: 'cloudflare-worker'
+    }, 412);
+  }
   
   return c.json({
-    NEXT_PUBLIC_SUPABASE_URL: c.env.NEXT_PUBLIC_SUPABASE_URL,
-    NEXT_PUBLIC_SUPABASE_ANON_KEY: c.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-    ...publicConfig
+    ...publicConfig,
+    runtime: 'cloudflare-worker',
+    buildTime: new Date().toISOString()
   });
 });
 
