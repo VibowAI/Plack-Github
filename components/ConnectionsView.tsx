@@ -1,15 +1,10 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { Mail, Search, ChevronRight, X, CheckCircle2, Video, Calendar, HardDrive, BookOpen, MessageSquare, Github } from 'lucide-react';
+import { Search, ChevronRight, CheckCircle2, Video, BookOpen, MessageSquare, Github } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export interface ConnectionsViewProps {
   theme: 'light' | 'dark' | 'cosmic';
-  gmailAccessToken: string | null;
-  gmailEmail: string | null;
-  gmailName: string | null;
-  onConnectGmail: () => void;
-  onDisconnectGmail: () => void;
   zoomEmail: string | null;
   onConnectZoom: () => void;
   onDisconnectZoom: () => void;
@@ -21,11 +16,6 @@ export interface ConnectionsViewProps {
 
 export default function ConnectionsView({
   theme,
-  gmailAccessToken,
-  gmailEmail,
-  gmailName,
-  onConnectGmail,
-  onDisconnectGmail,
   zoomEmail,
   onConnectZoom,
   onDisconnectZoom,
@@ -41,7 +31,7 @@ export default function ConnectionsView({
     {
       id: 'zoom',
       name: 'Zoom',
-      description: 'Create, update, cancel, and manage Zoom meetings directly from Plack AI.',
+      description: 'Schedule and manage Zoom meetings directly from Plack AI.',
       icon: <Video size={24} className="text-blue-500" />,
       color: 'bg-blue-500/10 border-blue-500/15',
       connected: !!zoomEmail,
@@ -49,42 +39,6 @@ export default function ConnectionsView({
       category: 'productivity',
       email: zoomEmail,
       label: 'Video Conferencing'
-    },
-    {
-      id: 'gmail',
-      name: 'Gmail',
-      description: 'Draft emails, summarize threads, and prepare replies directly from chat.',
-      icon: <Mail size={24} className="text-red-500" />,
-      color: 'bg-red-500/10 border-red-500/15',
-      connected: !!gmailAccessToken,
-      comingSoon: false,
-      category: 'productivity',
-      email: gmailEmail,
-      label: 'Google Workspace'
-    },
-    {
-      id: 'calendar',
-      name: 'Google Calendar',
-      description: 'Coordinate your schedule, view upcoming slots, and manage invitations.',
-      icon: <Calendar size={24} className="text-emerald-500" />,
-      color: 'bg-emerald-500/10 border-emerald-500/15',
-      connected: false,
-      comingSoon: true,
-      category: 'productivity',
-      email: null,
-      label: 'Google Workspace'
-    },
-    {
-      id: 'drive',
-      name: 'Google Drive',
-      description: 'Access, search, and analyze your documents and files seamlessly in conversations.',
-      icon: <HardDrive size={24} className="text-amber-500" />,
-      color: 'bg-amber-500/10 border-amber-500/15',
-      connected: false,
-      comingSoon: true,
-      category: 'productivity',
-      email: null,
-      label: 'Google Workspace'
     },
     {
       id: 'notion',
@@ -131,20 +85,13 @@ export default function ConnectionsView({
   });
 
   return (
-    <motion.div 
-      initial={{ opacity: 0, y: 10, scale: 0.98 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, scale: 0.98, transition: { duration: 0.15 } }}
-      transition={{ type: "spring", stiffness: 300, damping: 30 }}
+    <div 
       className={cn(
-        "fixed inset-0 flex flex-col font-sans relative z-40 transition-colors duration-300 overflow-x-hidden",
+        "h-screen flex flex-col font-sans relative z-10 transition-colors duration-300 overflow-x-hidden",
         theme === 'light' ? "bg-[#fcfcfc] text-neutral-800" :
         theme === 'cosmic' ? "bg-[#04020a] text-indigo-50" :
         "bg-[#060606] text-neutral-100"
       )}
-      style={{
-        paddingLeft: isSidebarOpen && !isMobile ? `${sidebarWidth}px` : '0px'
-      }}
     >
       {/* Background Ambience */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none -z-10">
@@ -170,19 +117,9 @@ export default function ConnectionsView({
         "border-neutral-800/60 bg-[#0a0a0a]/70"
       )}>
         <div className="flex items-center gap-5">
-          <button 
-            type="button"
-            onClick={onClose}
-            className={cn(
-              "p-2.5 rounded-full cursor-pointer transition-all active:scale-95 flex items-center justify-center",
-              theme === 'light' ? "hover:bg-neutral-100 text-neutral-500 bg-white shadow-sm border border-neutral-200" : "hover:bg-white/10 text-neutral-400 bg-neutral-900 shadow-sm border border-neutral-800"
-            )}
-          >
-            <X size={20} />
-          </button>
           <div>
-            <h1 className="text-xl md:text-2xl font-bold tracking-tight leading-none mb-1.5">Connections Hub</h1>
-            <p className="text-[13.5px] opacity-60 font-medium">Extend Plack AI with your everyday tools.</p>
+            <h1 className="text-xl md:text-2xl font-bold tracking-tight leading-none mb-1.5">Connections</h1>
+            <p className="text-[13.5px] opacity-60 font-medium">Connect external services to extend Plack AI.</p>
           </div>
         </div>
       </header>
@@ -325,7 +262,6 @@ export default function ConnectionsView({
                       <button 
                         type="button"
                         onClick={() => {
-                          if (app.id === 'gmail') onDisconnectGmail();
                           if (app.id === 'zoom') onDisconnectZoom();
                         }}
                         className="text-[13px] font-bold text-red-500 hover:text-red-600 hover:underline transition-colors active:scale-95 cursor-pointer"
@@ -336,7 +272,6 @@ export default function ConnectionsView({
                       <button 
                         type="button"
                         onClick={() => {
-                          if (app.id === 'gmail') onConnectGmail();
                           if (app.id === 'zoom') onConnectZoom();
                         }}
                         className={cn(
@@ -356,7 +291,7 @@ export default function ConnectionsView({
 
         </div>
       </div>
-    </motion.div>
+    </div>
   );
 }
 

@@ -31,7 +31,6 @@ export async function POST(req: NextRequest) {
       useWebSearch,
       messageId,
       userId,
-      gmailAccessToken,
       autoSaveMemories = true,
       deepResearchWebSearch = true,
       preferredDomains = [],

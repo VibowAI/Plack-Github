@@ -209,7 +209,7 @@ export default function Sidebar({
       } else {
         // Desktop
         // If Google-only account, require Google re-authentication confirmation
-        const isGoogleAccount = user?.app_metadata?.provider === 'google' || user?.app_metadata?.providers?.includes('google') || user?.email?.includes('gmail');
+        const isGoogleAccount = user?.app_metadata?.provider === 'google' || user?.app_metadata?.providers?.includes('google');
         if (isGoogleAccount) {
           const googleConfirm = window.confirm("Verification Required: Re-authenticate with your Google account to authorize account deletion?");
           if (googleConfirm) {

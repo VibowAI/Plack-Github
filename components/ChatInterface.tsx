@@ -50,7 +50,6 @@ import {
   ChevronRight,
   Search,
   Plug,
-  Mail,
   EyeOff,
   Shield,
   AlertCircle,
@@ -76,7 +75,6 @@ import Auth from '@/components/Auth';
 import Sidebar from '@/components/Sidebar';
 import ConversationMinimap from '@/components/ConversationMinimap';
 import SearchSourcesSidebar from '@/components/SearchSourcesSidebar';
-import ConnectionsView from '@/components/ConnectionsView';
 import { logger, LogCategory } from '@/lib/logger';
 import { useAppContext } from '@/context/AppContext';
 
@@ -102,8 +100,6 @@ interface Message {
   isStreaming?: boolean;
   attachments?: Attachment[];
   groundingMetadata?: any;
-  gmailActions?: any[];
-  gmailProgressLogs?: string[];
   isDeepResearch?: boolean;
   researchTimeline?: string[];
   activeStageIndex?: number;
@@ -366,7 +362,6 @@ export default function Home() {
   const [isMobileMapOpen, setIsMobileMapOpen] = useState(false);
   const [isWebSearchEnabled, setIsWebSearchEnabled] = useState(false);
   const [useDeepResearch, setUseDeepResearch] = useState(false);
-  const [isGmailEnabled, setIsGmailEnabled] = useState(false);
   const [showWebSearchLimitModal, setShowWebSearchLimitModal] = useState(false);
   const [webSearchRemaining, setWebSearchRemaining] = useState<number | null>(null);
   const [limitCard, setLimitCard] = useState<{ actionType: string; resetIn: string } | null>(null);
@@ -397,10 +392,6 @@ export default function Home() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const isTemporaryChat = false;
   const setIsTemporaryChat = (val: boolean) => {};
-  const [gmailAccessToken, setGmailAccessToken] = useState<string | null>(null);
-  const [gmailEmail, setGmailEmail] = useState<string | null>(null);
-  const [gmailName, setGmailName] = useState<string | null>(null);
-  const [gmailConnectedAt, setGmailConnectedAt] = useState<string | null>(null);
   const [isManageExpanded, setIsManageExpanded] = useState(false);
 
   // Zoom Integration States & Handlers
@@ -511,26 +502,6 @@ export default function Home() {
   };
 
 
-  // New Gmail Integration Action Sheet States
-  const [isGmailActionSheetOpen, setIsGmailActionSheetOpen] = useState(false);
-  const [gmailActionType, setGmailActionType] = useState<'menu' | 'draft' | 'reply' | 'summarize'>('menu');
-  const [gmailDraftPrompt, setGmailDraftPrompt] = useState('');
-  const [isGmailActionLoading, setIsGmailActionLoading] = useState(false);
-  const [gmailDraftCreatedLink, setGmailDraftCreatedLink] = useState<string | null>(null);
-  const [gmailInboundEmails, setGmailInboundEmails] = useState<any[]>([]);
-  const [isGmailEmailsLoading, setIsGmailEmailsLoading] = useState(false);
-  const [selectedInboundEmail, setSelectedInboundEmail] = useState<any | null>(null);
-  const [gmailReplyContext, setGmailReplyContext] = useState('');
-  const [gmailSummarizedOutput, setGmailSummarizedOutput] = useState<string | null>(null);
-  const [connectionsSearch, setConnectionsSearch] = useState('');
-  const [connectionsFilter, setConnectionsFilter] = useState<'all' | 'connected' | 'productivity'>('all');
-  const [isGmailComposerOpen, setIsGmailComposerOpen] = useState(false);
-  const [gmailTo, setGmailTo] = useState('');
-  const [gmailSubject, setGmailSubject] = useState('');
-  const [gmailBody, setGmailBody] = useState('');
-  const [isGmailSending, setIsGmailSending] = useState(false);
-  const [isGmailDrafting, setIsGmailDrafting] = useState(false);
-  const [draftRestoredNote, setDraftRestoredNote] = useState<string | null>(null);
   const [isLogoutConfirmOpen, setIsLogoutConfirmOpen] = useState(false);
   const [isFullscreenInputOpen, setIsFullscreenInputOpen] = useState(false);
   const [isLiveModeOpen, setIsLiveModeOpen] = useState(false);
@@ -1174,37 +1145,8 @@ export default function Home() {
 
 
 
-  // --- GMAIL OAuth ACCESS TOKEN RECOVERY ---
+  // --- CONNECTIONS STATUS RECOVERY ---
   useEffect(() => {
-    const getSessionGmailData = async () => {
-      const supabase = createClient();
-      const { data: { session: currentSession } } = await supabase.auth.getSession();
-      
-      if (currentSession?.provider_token) {
-        setGmailAccessToken(currentSession.provider_token);
-        setGmailEmail(currentSession.user?.email || null);
-        setGmailName(currentSession.user?.user_metadata?.full_name || null);
-        const nowTime = new Date().toLocaleString();
-        setGmailConnectedAt(nowTime);
-        
-        localStorage.setItem('gmail_access_token', currentSession.provider_token);
-        localStorage.setItem('gmail_email', currentSession.user?.email || '');
-        localStorage.setItem('gmail_name', currentSession.user?.user_metadata?.full_name || '');
-        localStorage.setItem('gmail_connected_at', nowTime);
-      } else {
-        const savedToken = localStorage.getItem('gmail_access_token');
-        const savedEmail = localStorage.getItem('gmail_email');
-        const savedName = localStorage.getItem('gmail_name');
-        const savedTime = localStorage.getItem('gmail_connected_at');
-        if (savedToken) {
-          setGmailAccessToken(savedToken);
-          setGmailEmail(savedEmail);
-          setGmailName(savedName);
-          setGmailConnectedAt(savedTime || new Date(Date.now() - 3600000).toLocaleString());
-        }
-      }
-    };
-    getSessionGmailData();
     fetchConnectionStatuses();
   }, [session]);
 
@@ -1468,279 +1410,6 @@ export default function Home() {
     } catch (e) {
       logger.logError(LogCategory.DATABASE, "Failed to delete chat", e);
     }
-  };
-
-  const handleConnectGmail = async () => {
-    try {
-      const supabase = createClient();
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          scopes: 'https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send',
-          redirectTo: window.location.origin,
-          queryParams: {
-            access_type: 'offline',
-            prompt: 'consent'
-          }
-        }
-      });
-      if (error) throw error;
-    } catch (err: any) {
-      console.error("Failed to connect Gmail scope", err);
-      showToast(err.message || "Failed to initiate Gmail connection");
-    }
-  };
-
-  const fetchRecentGmailMessages = async () => {
-    if (!gmailAccessToken) return;
-    setIsGmailEmailsLoading(true);
-    try {
-      const response = await fetch(`/api/gmail?action=list&accessToken=${encodeURIComponent(gmailAccessToken)}`);
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to retrieve emails");
-      }
-      setGmailInboundEmails(data.messages || []);
-    } catch (e: any) {
-      console.error(e);
-      showToast(e.message || "Failed to load recent emails.");
-    } finally {
-      setIsGmailEmailsLoading(false);
-    }
-  };
-
-  const handleCreateGmailDraftFlow = async () => {
-    if (!gmailAccessToken) {
-      showToast("Gmail is not connected.");
-      return;
-    }
-    if (!gmailDraftPrompt.trim()) {
-      showToast("Please enter what you would like to write.");
-      return;
-    }
-    setIsGmailActionLoading(true);
-    setGmailDraftCreatedLink(null);
-    try {
-      const prompt = `Write a high quality, professional, polite email based on the following instructions:
-"${gmailDraftPrompt}"
-
-Construct only the email body. Do not output anything else; no subject lines, no signatures, no HTML boilerplate, just the plain body. Ensure proper spacing.`;
-      
-      const gClientRes = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: [{ role: "user", content: prompt }],
-          model: "models/gemini-3.1-flash-lite-preview"
-        })
-      });
-      const gClientData = await gClientRes.json();
-      const generatedBody = gClientData.text || "Hello, this is a draft drafted by Plack AI.";
-
-      let autoSubject = "Draft correspondence";
-      if (gmailDraftPrompt.length < 50) {
-         autoSubject = gmailDraftPrompt;
-      } else {
-         autoSubject = gmailDraftPrompt.split(" ").slice(0, 5).join(" ") + "...";
-      }
-
-      const response = await fetch('/api/gmail', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'create_draft',
-          to: '',
-          subject: autoSubject,
-          body: generatedBody,
-          accessToken: gmailAccessToken
-        })
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to save draft");
-      }
-      setGmailDraftCreatedLink("https://mail.google.com/mail/u/0/#drafts");
-      showToast("Draft created successfully in Gmail!");
-      setGmailDraftPrompt('');
-    } catch (e: any) {
-      console.error(e);
-      showToast(e.message || "Failed to create draft");
-    } finally {
-      setIsGmailActionLoading(false);
-    }
-  };
-
-  const handleCreateGmailReplyFlow = async () => {
-    if (!gmailAccessToken) {
-      showToast("Gmail is not connected.");
-      return;
-    }
-    if (!selectedInboundEmail) {
-      showToast("Please select an email thread first.");
-      return;
-    }
-    setIsGmailActionLoading(true);
-    try {
-      const emailContent = `From: ${selectedInboundEmail.from}\nSubject: ${selectedInboundEmail.subject}\nSnippet: ${selectedInboundEmail.snippet}`;
-      const response = await fetch('/api/gmail', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'create_reply_draft',
-          to: selectedInboundEmail.from,
-          subject: selectedInboundEmail.subject,
-          emailContent,
-          userInstructions: gmailReplyContext,
-          accessToken: gmailAccessToken
-        })
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to create draft reply");
-      }
-      setGmailDraftCreatedLink("https://mail.google.com/mail/u/0/#drafts");
-      showToast("Draft reply successfully created in Gmail!");
-      setGmailReplyContext('');
-    } catch (e: any) {
-      console.error(e);
-      showToast(e.message || "Failed to create draft reply");
-    } finally {
-      setIsGmailActionLoading(false);
-    }
-  };
-
-  const handleSummarizeGmailThreadFlow = async () => {
-    if (!gmailAccessToken) {
-      showToast("Gmail is not connected.");
-      return;
-    }
-    if (!selectedInboundEmail) {
-      showToast("Please select an email thread first.");
-      return;
-    }
-    setIsGmailActionLoading(true);
-    setGmailSummarizedOutput(null);
-    try {
-      const emailContent = `From: ${selectedInboundEmail.from}\nSubject: ${selectedInboundEmail.subject}\nSnippet: ${selectedInboundEmail.snippet}`;
-      const response = await fetch('/api/gmail', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'summarize_thread',
-          emailContent,
-          accessToken: gmailAccessToken
-        })
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to generate summary");
-      }
-      setGmailSummarizedOutput(data.summaryText);
-    } catch (e: any) {
-      console.error(e);
-      showToast(e.message || "Failed to summarize email");
-    } finally {
-      setIsGmailActionLoading(false);
-    }
-  };
-
-  const handleConnectDemoGmail = () => {
-    const demoToken = "ya29.demo-gmail-access-token-for-plack-ai-full-capabilities-compose-and-send";
-    const demoEmail = session?.user?.email || "demo.user@plack.ai";
-    const demoName = session?.user?.user_metadata?.full_name || "Demo Plack User";
-    
-    setGmailAccessToken(demoToken);
-    setGmailEmail(demoEmail);
-    setGmailName(demoName);
-    
-    localStorage.setItem('gmail_access_token', demoToken);
-    localStorage.setItem('gmail_email', demoEmail || '');
-    localStorage.setItem('gmail_name', demoName || '');
-    
-    showToast("Gmail connected successfully (Demo Mode)");
-  };
-
-  const handleGmailAction = async (action: 'send_email' | 'create_draft') => {
-    if (!gmailAccessToken) {
-      showToast("Gmail is disconnected. Please reconnect.");
-      return;
-    }
-    if (!gmailTo || !gmailTo.includes('@')) {
-      showToast("Please enter a valid recipient email address.");
-      return;
-    }
-    if (!gmailSubject.trim()) {
-      showToast("Please enter an email subject.");
-      return;
-    }
-    if (!gmailBody.trim()) {
-      showToast("Please write some content inside the email body.");
-      return;
-    }
-
-    if (action === 'send_email') setIsGmailSending(true);
-    else setIsGmailDrafting(true);
-
-    try {
-      const response = await fetch('/api/gmail', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          action,
-          to: gmailTo,
-          subject: gmailSubject,
-          body: gmailBody,
-          accessToken: gmailAccessToken
-        })
-      });
-
-      const resData = await response.json();
-
-      if (!response.ok) {
-        throw new Error(resData?.error || `Failed with status ${response.status}`);
-      }
-
-      showToast(action === 'send_email' ? "Email sent successfully!" : "Draft created successfully!");
-      setIsGmailComposerOpen(false);
-      setGmailTo('');
-      setGmailSubject('');
-      setGmailBody('');
-    } catch (err: any) {
-      console.error(err);
-      showToast(err.message || "An error occurred with Gmail connection");
-    } finally {
-      setIsGmailSending(false);
-      setIsGmailDrafting(false);
-    }
-  };
-
-  const handleDisconnectGmail = () => {
-    setGmailAccessToken(null);
-    setGmailEmail(null);
-    setGmailName(null);
-    localStorage.removeItem('gmail_access_token');
-    localStorage.removeItem('gmail_email');
-    localStorage.removeItem('gmail_name');
-    showToast("Gmail disconnected successfully.");
-  };
-
-  const handleAISpeedDraft = () => {
-    const modelMessages = messages.filter(m => m.role === 'model');
-    const lastMsg = modelMessages[modelMessages.length - 1];
-    if (!lastMsg) {
-      showToast("No AI messages found in this conversation to speed-draft from!");
-      return;
-    }
-
-    setGmailSubject(`Plack AI Support: Dialogue Digest`);
-    setGmailBody(
-      `Hello,\n\nI wanted to share this follow-up detail from Plack AI:\n\n` +
-      `"${lastMsg.content.slice(0, 1500)}"\n\n` +
-      `Best regards,\n${displayName || session?.user?.user_metadata?.full_name || "Plack User"}`
-    );
-    showToast("Synced content from last AI dialogue response!");
   };
 
   // Microphone support
@@ -2780,7 +2449,6 @@ Construct only the email body. Do not output anything else; no subject lines, no
               chatId: streamChatId,
               messageId: assistantMsgId,
               userId: session?.user?.id,
-              gmailAccessToken: isGmailEnabled ? gmailAccessToken : null,
               autoSaveMemories: autoSaveMemories,
               systemInstructionOverride: `AI Personality Tone to employ: ${targetPersonalityTone}\n` +
                 (customInstructions.trim() ? `User Custom Instructions to follow closely for every answer: "${customInstructions.trim()}"\n` : "") +
@@ -2876,8 +2544,6 @@ Construct only the email body. Do not output anything else; no subject lines, no
           let textBuffer = '';
           let nativeThoughtAccumulator = '';
           let groundingMetadataAccumulator: any = null;
-          let gmailActionsAccumulator: any = null;
-          let gmailProgressAccumulator: string[] = [];
           let researchTimelineAccumulator: string[] | undefined = undefined;
           let activeStageIndexAccumulator: number | undefined = undefined;
           let researchStatusAccumulator: string | undefined = undefined;
@@ -2943,12 +2609,8 @@ Construct only the email body. Do not output anything else; no subject lines, no
                       type: 'error',
                       content: "Memory update failed"
                     });
-                  } else if (parsed.gmailProgress) {
-                    gmailProgressAccumulator = [...gmailProgressAccumulator, parsed.gmailProgress];
                   } else if (parsed.groundingMetadata) {
                     groundingMetadataAccumulator = parsed.groundingMetadata;
-                  } else if (parsed.gmailActions) {
-                    gmailActionsAccumulator = parsed.gmailActions;
                   } else if (parsed.researchTimeline) {
                     researchTimelineAccumulator = parsed.researchTimeline;
                     activeStageIndexAccumulator = parsed.activeStageIndex;
@@ -3019,8 +2681,6 @@ Construct only the email body. Do not output anything else; no subject lines, no
                     content: displayContent,
                     reasoning: finalReasoning || undefined,
                     groundingMetadata: groundingMetadataAccumulator,
-                    gmailActions: gmailActionsAccumulator || undefined,
-                    gmailProgressLogs: gmailProgressAccumulator.length > 0 ? gmailProgressAccumulator : undefined,
                     researchTimeline: researchTimelineAccumulator,
                     activeStageIndex: activeStageIndexAccumulator,
                     researchStatus: researchStatusAccumulator,
@@ -5636,8 +5296,7 @@ Construct only the email body. Do not output anything else; no subject lines, no
                               </button>
                             </div>
 
-                            {/* Option 5: Connected Services Submenu */}
-                            {(zoomEmail || gmailAccessToken) && (
+                            {zoomEmail && (
                               <div className="border-t border-neutral-100 dark:border-white/5 mt-2 pt-2 px-1">
                                 <span className="text-[9.5px] font-bold uppercase tracking-widest text-neutral-400 dark:text-neutral-500 block mb-2 px-1.5">
                                   Connected Services
@@ -5659,24 +5318,6 @@ Construct only the email body. Do not output anything else; no subject lines, no
                                         <Video size={13} className="text-blue-500" />
                                       </div>
                                       <span className="text-[12px] font-bold font-sans">Zoom Scheduler</span>
-                                    </button>
-                                  )}
-                                  {gmailAccessToken && (
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setIsAttachmentMenuOpen(false);
-                                        setIsGmailActionSheetOpen(true);
-                                      }}
-                                      className={cn(
-                                        "flex items-center gap-3 w-full text-left p-2 rounded-xl transition-all cursor-pointer group hover:bg-neutral-100 dark:hover:bg-white/[0.05]",
-                                        theme === 'light' ? "text-neutral-700" : "text-neutral-300"
-                                      )}
-                                    >
-                                      <div className="w-7 h-7 rounded-lg bg-red-500/10 flex items-center justify-center shrink-0">
-                                        <Mail size={13} className="text-red-500" />
-                                      </div>
-                                      <span className="text-[12px] font-bold font-sans">Gmail Composer</span>
                                     </button>
                                   )}
                                 </div>
@@ -5841,8 +5482,7 @@ Construct only the email body. Do not output anything else; no subject lines, no
                               </button>
                             </div>
 
-                            {/* Option 5: Connected Services Submenu */}
-                            {(zoomEmail || gmailAccessToken) && (
+                            {zoomEmail && (
                               <div className="border-t border-neutral-100 dark:border-white/5 mt-2 pt-2 px-1 text-left">
                                 <span className="text-[9.5px] font-bold uppercase tracking-widest text-neutral-400 dark:text-neutral-500 block mb-2 px-1.5">
                                   Connected Services
@@ -5864,24 +5504,6 @@ Construct only the email body. Do not output anything else; no subject lines, no
                                         <Video size={13} className="text-blue-500" />
                                       </div>
                                       <span className="text-[12px] font-bold font-sans">Zoom Scheduler</span>
-                                    </button>
-                                  )}
-                                  {gmailAccessToken && (
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setIsAttachmentMenuOpen(false);
-                                        setIsGmailActionSheetOpen(true);
-                                      }}
-                                      className={cn(
-                                        "flex items-center gap-3 w-full text-left p-2 rounded-xl transition-all cursor-pointer group hover:bg-neutral-100 dark:hover:bg-white/[0.05]",
-                                        theme === 'light' ? "text-neutral-700" : "text-neutral-300"
-                                      )}
-                                    >
-                                      <div className="w-7 h-7 rounded-lg bg-red-500/10 flex items-center justify-center shrink-0">
-                                        <Mail size={13} className="text-red-500" />
-                                      </div>
-                                      <span className="text-[12px] font-bold font-sans">Gmail Composer</span>
                                     </button>
                                   )}
                                 </div>
@@ -7670,26 +7292,6 @@ Construct only the email body. Do not output anything else; no subject lines, no
           isMobile={isMobile}
         />
 
-        {/* Connections Hub Overlay */}
-        <AnimatePresence>
-          {pathname === '/connections' && (
-            <ConnectionsView
-              theme={theme}
-              gmailAccessToken={gmailAccessToken}
-              gmailEmail={gmailEmail}
-              gmailName={gmailName}
-              onConnectGmail={handleConnectGmail}
-              onDisconnectGmail={handleDisconnectGmail}
-              zoomEmail={zoomEmail}
-              onConnectZoom={handleConnectZoom}
-              onDisconnectZoom={handleDisconnectZoom}
-              onClose={() => router.push('/')}
-              isSidebarOpen={isSidebarOpen}
-              sidebarWidth={sidebarWidth}
-              isMobile={isMobile}
-            />
-          )}
-        </AnimatePresence>
       </main>
   );
 }
