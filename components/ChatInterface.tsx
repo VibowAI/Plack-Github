@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { useRouter, useParams } from 'next/navigation';
+import { useRouter, useParams, usePathname } from 'next/navigation';
 import { 
   Send, 
   Plus, 
@@ -57,6 +57,7 @@ import {
   Globe,
   CheckCircle2,
   Radio,
+  Video,
   AudioLines
 } from 'lucide-react';
 import PlackLive from '@/components/PlackLive';
@@ -231,6 +232,7 @@ export default function Home() {
   const router = useRouter();
   const params = useParams();
   const routeChatId = params?.id as string | undefined;
+  const pathname = usePathname();
 
   const {
     session,
@@ -400,6 +402,114 @@ export default function Home() {
   const [gmailName, setGmailName] = useState<string | null>(null);
   const [gmailConnectedAt, setGmailConnectedAt] = useState<string | null>(null);
   const [isManageExpanded, setIsManageExpanded] = useState(false);
+
+  // Zoom Integration States & Handlers
+  const [zoomEmail, setZoomEmail] = useState<string | null>(null);
+  const [isZoomLoading, setIsZoomLoading] = useState<boolean>(false);
+
+  const fetchConnectionStatuses = async () => {
+    if (!session?.access_token) return;
+    try {
+      const res = await fetch('/api/connections/status', {
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`
+        }
+      });
+      if (res.ok) {
+        const data = await res.json() as any;
+        const connections = data.connections || [];
+        const zoomConn = connections.find((c: any) => c.provider === 'zoom');
+        if (zoomConn) {
+          setZoomEmail(zoomConn.accountEmail);
+        } else {
+          setZoomEmail(null);
+        }
+      }
+    } catch (err) {
+      console.error('[ZOOM] Failed to fetch connection statuses:', err);
+    }
+  };
+
+  const handleConnectZoom = async () => {
+    if (!session?.access_token) {
+      alert('Please sign in first to connect services.');
+      return;
+    }
+    try {
+      setIsZoomLoading(true);
+      const res = await fetch('/api/auth/zoom/url', {
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`
+        }
+      });
+      if (!res.ok) {
+        throw new Error(await res.text());
+      }
+      const data = await res.json() as any;
+      if (!data.url) {
+        throw new Error('OAuth URL not returned from server');
+      }
+
+      const width = 600;
+      const height = 700;
+      const left = window.screenX + (window.innerWidth - width) / 2;
+      const top = window.screenY + (window.innerHeight - height) / 2;
+      
+      const popup = window.open(
+        data.url,
+        'Connect Zoom',
+        `width=${width},height=${height},left=${left},top=${top},status=no,resizable=yes`
+      );
+
+      const handleOAuthMessage = (event: MessageEvent) => {
+        if (event.data && event.data.type === 'ZOOM_CONNECTED') {
+          if (event.data.success) {
+            setZoomEmail(event.data.email || 'Connected');
+            fetchConnectionStatuses();
+          } else {
+            alert(`Unable to connect your Zoom account. Please try again. Error: ${event.data.error || 'Unknown'}`);
+          }
+          window.removeEventListener('message', handleOAuthMessage);
+        }
+      };
+
+      window.addEventListener('message', handleOAuthMessage);
+    } catch (err: any) {
+      console.error('[ZOOM] Connection failed:', err);
+      alert(`Unable to connect your Zoom account. Please try again.`);
+    } finally {
+      setIsZoomLoading(false);
+    }
+  };
+
+  const handleDisconnectZoom = async () => {
+    if (!session?.access_token) return;
+    if (!confirm('Are you sure you want to disconnect Zoom? This will revoke Plack AI access to manage meetings.')) return;
+    
+    try {
+      setIsZoomLoading(true);
+      const res = await fetch('/api/connections/disconnect', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({ provider: 'zoom' })
+      });
+      if (res.ok) {
+        setZoomEmail(null);
+        fetchConnectionStatuses();
+      } else {
+        throw new Error(await res.text());
+      }
+    } catch (err) {
+      console.error('[ZOOM] Disconnection failed:', err);
+      alert('Failed to disconnect Zoom. Please try again.');
+    } finally {
+      setIsZoomLoading(false);
+    }
+  };
+
 
   // New Gmail Integration Action Sheet States
   const [isGmailActionSheetOpen, setIsGmailActionSheetOpen] = useState(false);
@@ -1095,6 +1205,7 @@ export default function Home() {
       }
     };
     getSessionGmailData();
+    fetchConnectionStatuses();
   }, [session]);
 
   const startupHandledRef = useRef(false);
@@ -5525,6 +5636,52 @@ Construct only the email body. Do not output anything else; no subject lines, no
                               </button>
                             </div>
 
+                            {/* Option 5: Connected Services Submenu */}
+                            {(zoomEmail || gmailAccessToken) && (
+                              <div className="border-t border-neutral-100 dark:border-white/5 mt-2 pt-2 px-1">
+                                <span className="text-[9.5px] font-bold uppercase tracking-widest text-neutral-400 dark:text-neutral-500 block mb-2 px-1.5">
+                                  Connected Services
+                                </span>
+                                <div className="space-y-1">
+                                  {zoomEmail && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setIsAttachmentMenuOpen(false);
+                                        setInputValue("Create a Zoom meeting named Sync for tomorrow at 2 PM");
+                                      }}
+                                      className={cn(
+                                        "flex items-center gap-3 w-full text-left p-2 rounded-xl transition-all cursor-pointer group hover:bg-neutral-100 dark:hover:bg-white/[0.05]",
+                                        theme === 'light' ? "text-neutral-700" : "text-neutral-300"
+                                      )}
+                                    >
+                                      <div className="w-7 h-7 rounded-lg bg-blue-500/10 flex items-center justify-center shrink-0">
+                                        <Video size={13} className="text-blue-500" />
+                                      </div>
+                                      <span className="text-[12px] font-bold font-sans">Zoom Scheduler</span>
+                                    </button>
+                                  )}
+                                  {gmailAccessToken && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setIsAttachmentMenuOpen(false);
+                                        setIsGmailActionSheetOpen(true);
+                                      }}
+                                      className={cn(
+                                        "flex items-center gap-3 w-full text-left p-2 rounded-xl transition-all cursor-pointer group hover:bg-neutral-100 dark:hover:bg-white/[0.05]",
+                                        theme === 'light' ? "text-neutral-700" : "text-neutral-300"
+                                      )}
+                                    >
+                                      <div className="w-7 h-7 rounded-lg bg-red-500/10 flex items-center justify-center shrink-0">
+                                        <Mail size={13} className="text-red-500" />
+                                      </div>
+                                      <span className="text-[12px] font-bold font-sans">Gmail Composer</span>
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            )}
 
                           </motion.div>
 
@@ -5684,6 +5841,52 @@ Construct only the email body. Do not output anything else; no subject lines, no
                               </button>
                             </div>
 
+                            {/* Option 5: Connected Services Submenu */}
+                            {(zoomEmail || gmailAccessToken) && (
+                              <div className="border-t border-neutral-100 dark:border-white/5 mt-2 pt-2 px-1 text-left">
+                                <span className="text-[9.5px] font-bold uppercase tracking-widest text-neutral-400 dark:text-neutral-500 block mb-2 px-1.5">
+                                  Connected Services
+                                </span>
+                                <div className="space-y-1">
+                                  {zoomEmail && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setIsAttachmentMenuOpen(false);
+                                        setInputValue("Create a Zoom meeting named Sync for tomorrow at 2 PM");
+                                      }}
+                                      className={cn(
+                                        "flex items-center gap-3 w-full text-left p-2 rounded-xl transition-all cursor-pointer group hover:bg-neutral-100 dark:hover:bg-white/[0.05]",
+                                        theme === 'light' ? "text-neutral-700" : "text-neutral-300"
+                                      )}
+                                    >
+                                      <div className="w-7 h-7 rounded-lg bg-blue-500/10 flex items-center justify-center shrink-0">
+                                        <Video size={13} className="text-blue-500" />
+                                      </div>
+                                      <span className="text-[12px] font-bold font-sans">Zoom Scheduler</span>
+                                    </button>
+                                  )}
+                                  {gmailAccessToken && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setIsAttachmentMenuOpen(false);
+                                        setIsGmailActionSheetOpen(true);
+                                      }}
+                                      className={cn(
+                                        "flex items-center gap-3 w-full text-left p-2 rounded-xl transition-all cursor-pointer group hover:bg-neutral-100 dark:hover:bg-white/[0.05]",
+                                        theme === 'light' ? "text-neutral-700" : "text-neutral-300"
+                                      )}
+                                    >
+                                      <div className="w-7 h-7 rounded-lg bg-red-500/10 flex items-center justify-center shrink-0">
+                                        <Mail size={13} className="text-red-500" />
+                                      </div>
+                                      <span className="text-[12px] font-bold font-sans">Gmail Composer</span>
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            )}
 
                           </motion.div>
                         </>
@@ -7467,6 +7670,26 @@ Construct only the email body. Do not output anything else; no subject lines, no
           isMobile={isMobile}
         />
 
+        {/* Connections Hub Overlay */}
+        <AnimatePresence>
+          {pathname === '/connections' && (
+            <ConnectionsView
+              theme={theme}
+              gmailAccessToken={gmailAccessToken}
+              gmailEmail={gmailEmail}
+              gmailName={gmailName}
+              onConnectGmail={handleConnectGmail}
+              onDisconnectGmail={handleDisconnectGmail}
+              zoomEmail={zoomEmail}
+              onConnectZoom={handleConnectZoom}
+              onDisconnectZoom={handleDisconnectZoom}
+              onClose={() => router.push('/')}
+              isSidebarOpen={isSidebarOpen}
+              sidebarWidth={sidebarWidth}
+              isMobile={isMobile}
+            />
+          )}
+        </AnimatePresence>
       </main>
   );
 }

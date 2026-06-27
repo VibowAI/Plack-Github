@@ -271,6 +271,45 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 
--- 9. RELOAD SCHEMA CACHE
+-- 9. CREATE / MIGRATE CONNECTIONS TABLE
+CREATE TABLE IF NOT EXISTS public.connections (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  provider text NOT NULL,
+  account_email text,
+  access_token text NOT NULL, -- Encrypted
+  refresh_token text, -- Encrypted
+  expires_at timestamptz,
+  metadata jsonb DEFAULT '{}'::jsonb,
+  created_at timestamptz DEFAULT now() NOT NULL,
+  updated_at timestamptz DEFAULT now() NOT NULL,
+  UNIQUE (user_id, provider)
+);
+
+ALTER TABLE public.connections ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view own connections" ON public.connections;
+CREATE POLICY "Users can view own connections" ON public.connections FOR SELECT USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can insert own connections" ON public.connections;
+CREATE POLICY "Users can insert own connections" ON public.connections FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can update own connections" ON public.connections;
+CREATE POLICY "Users can update own connections" ON public.connections FOR UPDATE USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can delete own connections" ON public.connections;
+CREATE POLICY "Users can delete own connections" ON public.connections FOR DELETE USING (auth.uid() = user_id);
+
+DROP TRIGGER IF EXISTS trigger_update_connections_updated_at ON public.connections;
+CREATE TRIGGER trigger_update_connections_updated_at
+  BEFORE UPDATE ON public.connections
+  FOR EACH ROW
+  EXECUTE FUNCTION public.handle_updated_at();
+
+CREATE INDEX IF NOT EXISTS idx_connections_user_id ON public.connections(user_id);
+
+
+-- 10. RELOAD SCHEMA CACHE
 -- Forces PostgREST to instantly reload definitions and resolves stale cache issues (PGRST205 / PGRST204)
 NOTIFY pgrst, 'reload schema';
+

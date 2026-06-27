@@ -7,6 +7,9 @@ import { createAdminClient, createClient } from '@/lib/supabase/client';
 import { detectDocumentTrigger } from '@/lib/ai/intent';
 import { classifyMemory } from '@/lib/ai/memory-classifier';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
+import { getUserConnections, saveUserConnection, deleteUserConnection, getValidAccessToken } from '@/lib/supabase/connections';
+import { createZoomMeeting, listZoomMeetings, cancelZoomMeeting, updateZoomMeeting, getZoomMeeting } from '@/lib/zoom';
+
 
 // Setup TypeScript bindings interface
 type Bindings = {
@@ -17,12 +20,12 @@ type Bindings = {
   NEXT_PUBLIC_SUPABASE_ANON_KEY: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
   TAVILY_API_KEY?: string;
-  ASSETS: {
+  ASSETS?: {
     fetch: (request: Request | string, init?: RequestInit) => Promise<Response>;
   };
 };
 
-const app = new Hono<{ Bindings: Bindings }>();
+export const app = new Hono<{ Bindings: Bindings }>();
 
 // Enable CORS and map Cloudflare bindings to process.env dynamically
 app.use('*', cors());
@@ -1300,6 +1303,317 @@ app.get('/api/debug/websearch', async (c) => {
   });
 });
 
+// ============================================================================
+// ZOOM & CONNECTIONS ENDPOINTS
+// ============================================================================
+
+async function getAuthUser(c: any) {
+  const supabaseUrl = c.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = c.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const authHeader = c.req.header('Authorization');
+  const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
+  if (!token) return null;
+
+  try {
+    const userClient = createSupabaseClient(supabaseUrl, supabaseAnonKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+      global: { headers: { Authorization: `Bearer ${token}` } }
+    });
+    const { data: { user } } = await userClient.auth.getUser();
+    return user;
+  } catch (err) {
+    console.error('[AUTH ERROR] getAuthUser failed:', err);
+    return null;
+  }
+}
+
+// 1. GET /api/auth/zoom/url
+app.get('/api/auth/zoom/url', async (c) => {
+  try {
+    const user = await getAuthUser(c);
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const clientId = c.env.ZOOM_CLIENT_ID;
+    if (!clientId) {
+      return c.json({ error: 'Zoom Client ID is not configured on the server.' }, 500);
+    }
+
+    const origin = new URL(c.req.url).origin;
+    const redirectUri = `${origin}/api/auth/zoom/callback`;
+    
+    // Construct Zoom Auth URL
+    const zoomAuthUrl = new URL('https://zoom.us/oauth/authorize');
+    zoomAuthUrl.searchParams.set('response_type', 'code');
+    zoomAuthUrl.searchParams.set('client_id', clientId);
+    zoomAuthUrl.searchParams.set('redirect_uri', redirectUri);
+    zoomAuthUrl.searchParams.set('state', user.id);
+
+    console.log(`[ZOOM OAUTH LOG] Generated Authorization URL for user ${user.id}`);
+    return c.json({ url: zoomAuthUrl.toString() });
+  } catch (err: any) {
+    console.error('[ZOOM OAUTH ERROR] Failed to generate auth URL:', err);
+    return c.json({ error: 'Failed to initiate Zoom authentication: ' + err.message }, 500);
+  }
+});
+
+// 2. GET /api/auth/zoom/callback (Handles OAuth 2.0 redirect)
+app.get('/api/auth/zoom/callback', async (c) => {
+  const code = c.req.query('code');
+  const state = c.req.query('state'); // user_id
+
+  if (!code || !state) {
+    return c.html(`
+      <!DOCTYPE html>
+      <html>
+      <head><title>Zoom Connection Failed</title></head>
+      <body style="font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; background-color: #f9fafb;">
+        <div style="text-align: center; padding: 24px; border-radius: 12px; background: white; box-shadow: 0 4px 12px rgba(0,0,0,0.05); max-width: 400px;">
+          <h2 style="color: #ef4444; margin-bottom: 8px;">Connection Failed</h2>
+          <p style="color: #4b5563; font-size: 14px;">Authorization code or state was missing. Please try again.</p>
+          <button onclick="window.close()" style="margin-top: 16px; background: #3b82f6; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer;">Close Window</button>
+        </div>
+        <script>
+          if (window.opener) {
+            window.opener.postMessage({ type: 'ZOOM_CONNECTED', success: false, error: 'Missing code or state' }, '*');
+          }
+        </script>
+      </body>
+      </html>
+    `);
+  }
+
+  try {
+    const clientId = c.env.ZOOM_CLIENT_ID;
+    const clientSecret = c.env.ZOOM_CLIENT_SECRET;
+    
+    if (!clientId || !clientSecret) {
+      throw new Error('Zoom environment variables are not fully configured.');
+    }
+
+    const origin = new URL(c.req.url).origin;
+    const redirectUri = `${origin}/api/auth/zoom/callback`;
+
+    // 1. Exchange auth code for access/refresh tokens
+    const tokenUrl = 'https://zoom.us/oauth/token';
+    const credentials = btoa(`${clientId}:${clientSecret}`);
+    const tokenParams = new URLSearchParams({
+      grant_type: 'authorization_code',
+      code: code,
+      redirect_uri: redirectUri
+    });
+
+    const tokenRes = await fetch(tokenUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Basic ${credentials}`,
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: tokenParams.toString()
+    });
+
+    if (!tokenRes.ok) {
+      const errText = await tokenRes.text();
+      throw new Error(`Zoom Token Exchange failed: ${errText}`);
+    }
+
+    const tokenData = await tokenRes.json() as any;
+    const { access_token, refresh_token, expires_in } = tokenData;
+
+    // 2. Fetch the connected Zoom user's profile to retrieve their email
+    const profileRes = await fetch('https://api.zoom.us/v2/users/me', {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${access_token}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    let accountEmail = null;
+    if (profileRes.ok) {
+      const profileData = await profileRes.json() as any;
+      accountEmail = profileData.email || null;
+    } else {
+      console.warn(`[ZOOM API WARNING] Failed to fetch Zoom user profile: ${await profileRes.text()}`);
+    }
+
+    // 3. Save to Supabase using service client
+    await saveUserConnection(
+      state, // user_id
+      'zoom',
+      accountEmail,
+      access_token,
+      refresh_token || null,
+      expires_in || 3599,
+      { scope: tokenData.scope || '' },
+      c.env
+    );
+
+    console.log(`[ZOOM CONNECTION SUCCESS] Zoom successfully connected for user ${state} (${accountEmail})`);
+
+    // Return HTML page to close popup and notify parent window
+    return c.html(`
+      <!DOCTYPE html>
+      <html>
+      <head><title>Zoom Connected!</title></head>
+      <body style="font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; background-color: #f9fafb;">
+        <div style="text-align: center; padding: 24px; border-radius: 12px; background: white; box-shadow: 0 4px 12px rgba(0,0,0,0.05); max-width: 400px;">
+          <div style="font-size: 48px; margin-bottom: 12px;">✅</div>
+          <h2 style="color: #10b981; margin-bottom: 8px;">Zoom Connected!</h2>
+          <p style="color: #4b5563; font-size: 14px;">Your Zoom account <strong>${accountEmail || ''}</strong> has been connected successfully to Plack AI.</p>
+          <p style="color: #9ca3af; font-size: 12px; margin-top: 8px;">This window will close automatically.</p>
+        </div>
+        <script>
+          if (window.opener) {
+            window.opener.postMessage({ type: 'ZOOM_CONNECTED', success: true, email: '${accountEmail || ""}' }, '*');
+          }
+          setTimeout(() => {
+            window.close();
+          }, 2500);
+        </script>
+      </body>
+      </html>
+    `);
+  } catch (err: any) {
+    console.error('[ZOOM OAUTH ERROR] OAuth Exchange Callback Failed:', err);
+    return c.html(`
+      <!DOCTYPE html>
+      <html>
+      <head><title>Zoom Connection Failed</title></head>
+      <body style="font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; background-color: #f9fafb;">
+        <div style="text-align: center; padding: 24px; border-radius: 12px; background: white; box-shadow: 0 4px 12px rgba(0,0,0,0.05); max-width: 410px;">
+          <h2 style="color: #ef4444; margin-bottom: 8px;">Connection Failed</h2>
+          <p style="color: #4b5563; font-size: 14px;">Unable to connect your Zoom account. Please try again.</p>
+          <p style="color: #ef4444; font-size: 12px; font-family: monospace; background: #fef2f2; padding: 8px; border-radius: 6px; margin-top: 12px; text-align: left; overflow-wrap: break-word;">
+            Error: ${err.message || err}
+          </p>
+          <button onclick="window.close()" style="margin-top: 16px; background: #3b82f6; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer;">Close Window</button>
+        </div>
+        <script>
+          if (window.opener) {
+            window.opener.postMessage({ type: 'ZOOM_CONNECTED', success: false, error: '${err.message || "Failed to exchange authorization token"}' }, '*');
+          }
+        </script>
+      </body>
+      </html>
+    `);
+  }
+});
+
+// 3. GET /api/connections/status (Check connected services)
+app.get('/api/connections/status', async (c) => {
+  try {
+    const user = await getAuthUser(c);
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const connections = await getUserConnections(user.id);
+    const sanitizedConnections = connections.map(conn => ({
+      provider: conn.provider,
+      accountEmail: conn.account_email,
+      expiresAt: conn.expires_at,
+      connectedAt: conn.created_at,
+    }));
+
+    return c.json({ connections: sanitizedConnections });
+  } catch (err: any) {
+    console.error('[CONNECTIONS ERROR] Failed to fetch connection statuses:', err);
+    return c.json({ error: 'Failed to retrieve connection statuses: ' + err.message }, 500);
+  }
+});
+
+// 4. POST /api/connections/disconnect
+app.post('/api/connections/disconnect', async (c) => {
+  try {
+    const user = await getAuthUser(c);
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const { provider } = await c.req.json().catch(() => ({}));
+    if (!provider) {
+      return c.json({ error: 'Provider is required' }, 400);
+    }
+
+    await deleteUserConnection(user.id, provider);
+    console.log(`[ZOOM DISCONNECTED] Successfully disconnected ${provider} for user ${user.id}`);
+    return c.json({ success: true, message: `Disconnected ${provider} successfully.` });
+  } catch (err: any) {
+    console.error('[CONNECTIONS ERROR] Disconnect failed:', err);
+    return c.json({ error: 'Failed to disconnect service: ' + err.message }, 500);
+  }
+});
+
+// 5. POST /api/zoom/execute (Execute direct Zoom API actions safely on behalf of user)
+app.post('/api/zoom/execute', async (c) => {
+  try {
+    const user = await getAuthUser(c);
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const { action, meetingId, topic, startTime, duration, timezone } = body;
+
+    if (!action) {
+      return c.json({ error: 'action is required' }, 400);
+    }
+
+    console.log(`[DEVELOPER LOG] Zoom API execution requested by ${user.email}. Action: ${action}`);
+
+    if (action === 'list') {
+      const meetings = await listZoomMeetings(user.id, c.env);
+      return c.json({ success: true, meetings });
+    }
+
+    if (action === 'get') {
+      if (!meetingId) return c.json({ error: 'meetingId is required' }, 400);
+      const meeting = await getZoomMeeting(user.id, meetingId, c.env);
+      return c.json({ success: true, meeting });
+    }
+
+    if (action === 'create') {
+      if (!topic || !startTime) {
+        return c.json({ error: 'topic and startTime are required to create a meeting.' }, 400);
+      }
+      const meeting = await createZoomMeeting(user.id, {
+        topic,
+        start_time: startTime,
+        duration,
+        timezone
+      }, c.env);
+      console.log(`[DEVELOPER LOG] Zoom meeting created successfully by ${user.email}. Meeting ID: ${meeting.id}`);
+      return c.json({ success: true, meeting });
+    }
+
+    if (action === 'update') {
+      if (!meetingId) return c.json({ error: 'meetingId is required' }, 400);
+      const result = await updateZoomMeeting(user.id, meetingId, {
+        topic,
+        start_time: startTime,
+        duration,
+        timezone
+      }, c.env);
+      console.log(`[DEVELOPER LOG] Zoom meeting ${meetingId} updated successfully by ${user.email}`);
+      return c.json({ success: true, result });
+    }
+
+    if (action === 'cancel') {
+      if (!meetingId) return c.json({ error: 'meetingId is required' }, 400);
+      await cancelZoomMeeting(user.id, meetingId, c.env);
+      console.log(`[DEVELOPER LOG] Zoom meeting ${meetingId} cancelled successfully by ${user.email}`);
+      return c.json({ success: true });
+    }
+
+    return c.json({ error: 'Invalid or unsupported action' }, 400);
+  } catch (err: any) {
+    console.error('[ZOOM API ERROR] Execution Failed:', err);
+    return c.json({ error: err.message || 'Zoom execution failed' }, 500);
+  }
+});
+
 // 17. POST /api/chat (The main endpoint)
 interface ChatMessage {
   role: 'user' | 'model';
@@ -1937,9 +2251,45 @@ Respond with a JSON object: { "requiresSearch": boolean }`;
       ${profileSummary?.commonProjects ? `- Common Projects: ${profileSummary.commonProjects}` : ''}`;
     }
 
+    // Check if Zoom is connected for this user
+    let isZoomConnected = false;
+    let zoomEmail = "";
+    if (userId) {
+      try {
+        const conns = await getUserConnections(userId);
+        const zoomConn = conns.find(c => c.provider === 'zoom');
+        if (zoomConn) {
+          isZoomConnected = true;
+          zoomEmail = zoomConn.account_email || "";
+        }
+      } catch (err) {
+        console.error('[ZOOM] Failed to fetch connection status for chat context:', err);
+      }
+    }
+
+    baseInstruction += `\n\n=== ZOOM CONNECTIONS SYSTEM ===\n`;
+    if (isZoomConnected) {
+      baseInstruction += `Zoom is currently CONNECTED for this user (Connected Account Email: ${zoomEmail}).\n` +
+        `You can assist the user in managing their Zoom meetings (create, list, update, cancel).\n` +
+        `1. EXPLICIT CONFIRMATION MANDATE: Before the AI performs any Zoom action requiring account modifications (create, update, cancel), you MUST clearly explain what will happen and request confirmation by outputting a special confirmation tag EXACTLY in this format on its own line:\n` +
+        `   [ZOOM_CONFIRM_REQUIRED:actionType:jsonParams]\n` +
+        `   Where actionType is 'create', 'update', or 'cancel'.\n` +
+        `   Where jsonParams is a stringified JSON object matching these schemas:\n` +
+        `     - For create: {"topic": "Meeting Topic", "startTime": "2026-06-28T09:00:00Z", "duration": 40, "timezone": "UTC"}\n` +
+        `     - For update: {"meetingId": "123456789", "topic": "Updated Topic", "startTime": "2026-06-28T10:00:00Z", "duration": 40}\n` +
+        `     - For cancel: {"meetingId": "123456789", "topic": "Meeting Topic"}\n` +
+        `   Example: If the user says "Create a Zoom meeting tomorrow at 9 AM called Design Review", write: "I am ready to schedule your Zoom meeting. Please confirm the details below:" and write the tag on its own line:\n` +
+        `   [ZOOM_CONFIRM_REQUIRED:create:{"topic":"Design Review","startTime":"2026-06-28T09:00:00Z","duration":40}]\n` +
+        `2. Listing meetings: If the user wants to list meetings, you do not need confirmation. Output a tag on its own line: [ZOOM_ACTION:list:{}] so the frontend can retrieve and render the active upcoming meetings.\n` +
+        `3. Never perform actions or state that you deleted or scheduled meetings without outputting the confirmation tag first. The system will handle the action when the user clicks 'Confirm' in the interactive card.`;
+    } else {
+      baseInstruction += `Zoom is NOT connected. If the user asks to schedule, view, or manage Zoom meetings, politely instruct them to connect their Zoom account first on the Connections page (/connections) before you can perform any Zoom actions.`;
+    }
+
     const systemInstruction = systemInstructionOverride 
       ? `${memoryContext}${baseInstruction}\n${systemInstructionOverride}`
       : `${memoryContext}${baseInstruction}`;
+
 
     const config: any = {
       systemInstruction,
@@ -2079,21 +2429,57 @@ Respond with a JSON object: { "requiresSearch": boolean }`;
   }
 });
 
-// 18. Serves fallback index.html for React SPA Routing on GET *
+// 18. Runtime configuration endpoint
+app.get('/api/config', async (c) => {
+  const publicConfig: Record<string, string> = {};
+  
+  // Extract all NEXT_PUBLIC_ variables from the environment
+  for (const [key, value] of Object.entries(c.env || {})) {
+    if (key.startsWith('NEXT_PUBLIC_') && typeof value === 'string') {
+      publicConfig[key] = value;
+    }
+  }
+
+  console.log(`[CONFIG API] Returning ${Object.keys(publicConfig).length} public variables`);
+  
+  return c.json({
+    NEXT_PUBLIC_SUPABASE_URL: c.env.NEXT_PUBLIC_SUPABASE_URL,
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: c.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    ...publicConfig
+  });
+});
+
+// 19. Serves fallback index.html for React SPA Routing on GET *
 app.get('*', async (c) => {
   const url = new URL(c.req.url);
   
+  // Diagnostic logs
+  const assetsAvailable = !!c.env.ASSETS;
+  const runtime = process.env.NODE_ENV || 'development';
+  
+  console.log(`[ASSETS CHECK] Assets Available: ${assetsAvailable} | Runtime: ${runtime} | Path: ${url.pathname}`);
+
   // If request contains extension (files like .js, .css, .png, etc.), or is /api/* request, let it go.
   if (url.pathname.startsWith('/api') || url.pathname.includes('.')) {
     return c.next();
   }
   
+  // If ASSETS binding is missing (usually in development), let Vite dev server handle it
+  if (!assetsAvailable) {
+    if (runtime === 'development') {
+      return c.next();
+    }
+    return c.text("Asset serving index error: ASSETS binding is not configured in this environment.", 500);
+  }
+
   // Otherwise, serve index.html from assets for React Router client navigation!
   const indexUrl = new URL('/', url.origin);
   try {
-    const response = await c.env.ASSETS.fetch(indexUrl);
+    console.log(`[INDEX INTERCEPT] Fetching index from assets: ${indexUrl.toString()}`);
+    const response = await (c.env.ASSETS as any).fetch(indexUrl);
     return response;
   } catch (err: any) {
+    console.error(`[ASSETS ERROR] Failed to fetch ${indexUrl.toString()}:`, err);
     return c.text("Asset serving index error: " + err.message, 500);
   }
 });

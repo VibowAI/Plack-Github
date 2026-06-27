@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { Mail, Search, ChevronRight, X, Workflow, LayoutGrid, Zap, CheckCircle2 } from 'lucide-react';
+import { motion } from 'motion/react';
+import { Mail, Search, ChevronRight, X, CheckCircle2, Video, Calendar, HardDrive, BookOpen, MessageSquare, Github } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export interface ConnectionsViewProps {
@@ -10,6 +10,9 @@ export interface ConnectionsViewProps {
   gmailName: string | null;
   onConnectGmail: () => void;
   onDisconnectGmail: () => void;
+  zoomEmail: string | null;
+  onConnectZoom: () => void;
+  onDisconnectZoom: () => void;
   onClose: () => void;
   isSidebarOpen?: boolean;
   sidebarWidth?: number;
@@ -23,6 +26,9 @@ export default function ConnectionsView({
   gmailName,
   onConnectGmail,
   onDisconnectGmail,
+  zoomEmail,
+  onConnectZoom,
+  onDisconnectZoom,
   onClose,
   isSidebarOpen,
   sidebarWidth = 280,
@@ -32,6 +38,18 @@ export default function ConnectionsView({
   const [filter, setFilter] = useState<'all'|'connected'>('all');
 
   const apps = [
+    {
+      id: 'zoom',
+      name: 'Zoom',
+      description: 'Create, update, cancel, and manage Zoom meetings directly from Plack AI.',
+      icon: <Video size={24} className="text-blue-500" />,
+      color: 'bg-blue-500/10 border-blue-500/15',
+      connected: !!zoomEmail,
+      comingSoon: false,
+      category: 'productivity',
+      email: zoomEmail,
+      label: 'Video Conferencing'
+    },
     {
       id: 'gmail',
       name: 'Gmail',
@@ -43,6 +61,66 @@ export default function ConnectionsView({
       category: 'productivity',
       email: gmailEmail,
       label: 'Google Workspace'
+    },
+    {
+      id: 'calendar',
+      name: 'Google Calendar',
+      description: 'Coordinate your schedule, view upcoming slots, and manage invitations.',
+      icon: <Calendar size={24} className="text-emerald-500" />,
+      color: 'bg-emerald-500/10 border-emerald-500/15',
+      connected: false,
+      comingSoon: true,
+      category: 'productivity',
+      email: null,
+      label: 'Google Workspace'
+    },
+    {
+      id: 'drive',
+      name: 'Google Drive',
+      description: 'Access, search, and analyze your documents and files seamlessly in conversations.',
+      icon: <HardDrive size={24} className="text-amber-500" />,
+      color: 'bg-amber-500/10 border-amber-500/15',
+      connected: false,
+      comingSoon: true,
+      category: 'productivity',
+      email: null,
+      label: 'Google Workspace'
+    },
+    {
+      id: 'notion',
+      name: 'Notion',
+      description: 'Sync your workspace notes, databases, and wikis directly to Plack AI.',
+      icon: <BookOpen size={24} className="text-neutral-500" />,
+      color: 'bg-neutral-500/10 border-neutral-500/15',
+      connected: false,
+      comingSoon: true,
+      category: 'productivity',
+      email: null,
+      label: 'Knowledge Management'
+    },
+    {
+      id: 'slack',
+      name: 'Slack',
+      description: 'Broadcast notifications, search channels, and interact with Slack threads.',
+      icon: <MessageSquare size={24} className="text-fuchsia-500" />,
+      color: 'bg-fuchsia-500/10 border-fuchsia-500/15',
+      connected: false,
+      comingSoon: true,
+      category: 'productivity',
+      email: null,
+      label: 'Communication'
+    },
+    {
+      id: 'github',
+      name: 'GitHub',
+      description: 'Track issues, search code repositories, and manage pull requests from chat.',
+      icon: <Github size={24} className={theme === 'light' ? 'text-black' : 'text-white'} />,
+      color: 'bg-slate-500/10 border-slate-500/15',
+      connected: false,
+      comingSoon: true,
+      category: 'productivity',
+      email: null,
+      label: 'Developer Tools'
     }
   ];
 
@@ -246,7 +324,10 @@ export default function ConnectionsView({
                     ) : app.connected ? (
                       <button 
                         type="button"
-                        onClick={() => app.id === 'gmail' && onDisconnectGmail()}
+                        onClick={() => {
+                          if (app.id === 'gmail') onDisconnectGmail();
+                          if (app.id === 'zoom') onDisconnectZoom();
+                        }}
                         className="text-[13px] font-bold text-red-500 hover:text-red-600 hover:underline transition-colors active:scale-95 cursor-pointer"
                       >
                         Disconnect Integration
@@ -254,7 +335,10 @@ export default function ConnectionsView({
                     ) : (
                       <button 
                         type="button"
-                        onClick={() => app.id === 'gmail' && onConnectGmail()}
+                        onClick={() => {
+                          if (app.id === 'gmail') onConnectGmail();
+                          if (app.id === 'zoom') onConnectZoom();
+                        }}
                         className={cn(
                           "px-5 py-2.5 rounded-xl text-[13.5px] font-bold transition-all flex items-center gap-2 active:scale-95 shadow-sm group-hover:shadow-md cursor-pointer",
                           theme === 'light' ? "bg-neutral-900 text-white hover:bg-neutral-800" : "bg-white text-black hover:bg-neutral-200"
@@ -275,3 +359,4 @@ export default function ConnectionsView({
     </motion.div>
   );
 }
+

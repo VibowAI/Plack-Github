@@ -1,9 +1,16 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import devServer from '@hono/vite-dev-server';
 import path from 'path';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    devServer({
+      entry: 'src/worker.ts',
+      injectClientScript: false,
+    }),
+  ],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './'),

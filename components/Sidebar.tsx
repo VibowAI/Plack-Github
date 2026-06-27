@@ -36,6 +36,7 @@ import {
   TrendingUp,
   Info,
   Plug,
+  Workflow,
   Plus
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -1121,6 +1122,23 @@ export default function Sidebar({
                 >
                   <Search size={13} />
                   <span>Search</span>
+                </button>
+              </div>
+
+              {/* 4. Connections */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={onOpenConnections}
+                  className={cn(
+                    "w-full flex items-center justify-start gap-1.5 px-2 py-0.5 rounded-md transition-all duration-205 active:scale-98 cursor-pointer text-[12px] font-medium border border-transparent hover:border-neutral-200 dark:hover:border-neutral-800 text-left",
+                    pathname === '/connections'
+                      ? (theme === 'light' ? "bg-neutral-100/80 text-neutral-900 border-neutral-200/50" : "bg-neutral-800/80 text-white border-neutral-700/50")
+                      : (theme === 'light' ? "text-neutral-700 hover:bg-neutral-50" : "text-neutral-300 hover:bg-neutral-800/50")
+                  )}
+                >
+                  <Workflow size={13} />
+                  <span>Connections</span>
                 </button>
               </div>
             </div>
