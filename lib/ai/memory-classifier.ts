@@ -11,9 +11,10 @@ export interface MemoryClassification {
 export async function classifyMemory(
   userText: string, 
   currentMemories: {id: string, content: string, category?: string}[] = [],
-  conversationHistory: string = ""
+  conversationHistory: string = "",
+  customKeys?: (string | undefined)[]
 ): Promise<MemoryClassification | null> {
-  const ai = getGeminiClient();
+  const ai = getGeminiClient(customKeys);
   
   console.log(`[MEMORY INTENT REQUEST] Analyzing user text for intent: "${userText}"`);
 

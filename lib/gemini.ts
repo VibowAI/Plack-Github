@@ -16,8 +16,8 @@ export function getGeminiClientWithFailover(keys: (string | undefined)[]): Googl
   return null;
 }
 
-export function getGeminiClient(): GoogleGenAI {
-  const customAi = getGeminiClientWithFailover([
+export function getGeminiClient(customKeys?: (string | undefined)[]): GoogleGenAI {
+  const customAi = getGeminiClientWithFailover(customKeys || [
     process.env.MY_GEMINI_API_KEY, 
     process.env.MY_GEMINI_API_KEY_2,
     process.env.GEMINI_API_KEY
@@ -28,8 +28,8 @@ export function getGeminiClient(): GoogleGenAI {
   return customAi;
 }
 
-export function getGeminiClientForTitle(): GoogleGenAI {
-  const customAi = getGeminiClientWithFailover([
+export function getGeminiClientForTitle(customKeys?: (string | undefined)[]): GoogleGenAI {
+  const customAi = getGeminiClientWithFailover(customKeys || [
     process.env.MY_GEMINI_API_KEY_2, 
     process.env.MY_GEMINI_API_KEY,
     process.env.GEMINI_API_KEY

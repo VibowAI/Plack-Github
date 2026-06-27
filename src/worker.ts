@@ -28,10 +28,19 @@ const app = new Hono<{ Bindings: Bindings }>();
 app.use('*', cors());
 app.use('*', async (c, next) => {
   globalThis.process = globalThis.process || {};
-  globalThis.process.env = {
-    ...globalThis.process.env,
-    ...c.env,
-  };
+  globalThis.process.env = globalThis.process.env || {};
+  
+  const blacklistedKeys = new Set([
+    'ASSETS',
+    'WORKER_SELF_REFERENCE',
+    'Images',
+  ]);
+
+  for (const [key, value] of Object.entries(c.env || {})) {
+    if (typeof value === 'string' && !blacklistedKeys.has(key)) {
+      globalThis.process.env[key] = value;
+    }
+  }
   await next();
 });
 
@@ -78,7 +87,11 @@ app.post('/api/chat/title', async (c) => {
       return c.json({ error: "firstMessage is required" }, 400);
     }
 
-    const ai = getGeminiClientForTitle();
+    const ai = getGeminiClientForTitle([
+      c.env.MY_GEMINI_API_KEY_2,
+      c.env.MY_GEMINI_API_KEY,
+      c.env.GEMINI_API_KEY
+    ]);
     const response = await ai.models.generateContent({
       model: "models/gemini-2.5-flash-lite",
       contents: `Generate a concise conversation title.
@@ -295,7 +308,11 @@ app.delete('/api/memories', async (c) => {
 app.post('/api/document/revise', async (c) => {
   try {
     const { prompt, currentContent } = await c.req.json();
-    const ai = getGeminiClient();
+    const ai = getGeminiClient([
+      c.env.MY_GEMINI_API_KEY,
+      c.env.MY_GEMINI_API_KEY_2,
+      c.env.GEMINI_API_KEY
+    ]);
 
     const systemPrompt = `You are a professional document editor. 
 Your task is to REWRITE or MODIFY the document content below based on the user's specific request.
@@ -350,7 +367,11 @@ app.post('/api/document/edit', async (c) => {
       return c.json({ error: "Document content and instruction are required" }, 400);
     }
 
-    const ai = getGeminiClient();
+    const ai = getGeminiClient([
+      c.env.MY_GEMINI_API_KEY,
+      c.env.MY_GEMINI_API_KEY_2,
+      c.env.GEMINI_API_KEY
+    ]);
 
     const editPrompt = `You are a professional editor. Your task is to modify the provided text according to the user's instructions.
 
@@ -474,7 +495,11 @@ app.post('/api/gmail', async (c) => {
       return c.json({ error: "Gmail connection token is missing. Please reconnect Gmail." }, 401);
     }
 
-    const ai = getGeminiClient();
+    const ai = getGeminiClient([
+      c.env.MY_GEMINI_API_KEY,
+      c.env.MY_GEMINI_API_KEY_2,
+      c.env.GEMINI_API_KEY
+    ]);
 
     if (action === "create_reply_draft") {
       if (!emailContent) {
@@ -1189,7 +1214,11 @@ app.get('/api/debug/websearch', async (c) => {
     modelsUsed.push(requestedModel);
 
     try {
-      const ai = getGeminiClient();
+      const ai = getGeminiClient([
+        c.env.MY_GEMINI_API_KEY,
+        c.env.MY_GEMINI_API_KEY_2,
+        c.env.GEMINI_API_KEY
+      ]);
       const mockSearchResults = [
         { title: "Gemini 3 Search Grounding Quotas", snippet: "Gemini 3 Search Grounding uses an independent quota bucket under Google GenAI SDK. If this quota is 0, requests with tools: [{ googleSearch: {} }] fail with 429 RESOURCE_EXHAUSTED." },
         { title: "Resolving 429 Resource Exhausted on Grounding", snippet: "Users experiencing 429 errors only when Web Search is enabled should verify their project's Search Grounding limits. Grounding utilizes a distinct tier separate from basic generation tokens." }
@@ -1220,7 +1249,11 @@ app.get('/api/debug/websearch', async (c) => {
     modelsUsed.push(requestedModel);
 
     try {
-      const ai = getGeminiClient();
+      const ai = getGeminiClient([
+        c.env.MY_GEMINI_API_KEY,
+        c.env.MY_GEMINI_API_KEY_2,
+        c.env.GEMINI_API_KEY
+      ]);
       const runConfig: any = {
         temperature: 0.1,
       };
@@ -1300,7 +1333,11 @@ app.post('/api/chat', async (c) => {
 
     console.log(`[MODEL] GEMINI CHAT REQUEST | Chat ID: ${chatId || 'N/A'} | Model: ${model} | DeepResearch: ${isDeepResearch}`);
 
-    const ai = getGeminiClient();
+    const ai = getGeminiClient([
+      c.env.MY_GEMINI_API_KEY,
+      c.env.MY_GEMINI_API_KEY_2,
+      c.env.GEMINI_API_KEY
+    ]);
 
     // 1. Retrieve Memories
     let memoryContext = "";
@@ -1803,7 +1840,11 @@ Respond with a JSON object: { "requiresSearch": boolean }`;
       } catch (err) {}
     }
 
-    const classification = await classifyMemory(userText, currentMemoriesForClassification);
+    const classification = await classifyMemory(userText, currentMemoriesForClassification, "", [
+      c.env.MY_GEMINI_API_KEY,
+      c.env.MY_GEMINI_API_KEY_2,
+      c.env.GEMINI_API_KEY
+    ]);
     
     const isMemoryIntent = !!(
       classification && 
