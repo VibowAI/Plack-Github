@@ -1,0 +1,15 @@
+254:  const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
+255:  const activeMessage = messages.find(m => m.id === activeMessageId);
+290:  }, [activeMessageId, activeDocument?.title, activeDocument?.content, isEditingDoc]);
+3048:    if (!activeMessageId) return;
+3049:    updateMessageDocument(activeMessageId, editedDocTitle, editedDocContent);
+3055:    if (!docChangePrompt.trim() || !activeDocument || !activeMessageId) return;
+3687:              width: (activeMessageId && !isMobile) ? `calc(${chatWidth}%)` : '100%',
+3688:              minWidth: (activeMessageId && !isMobile) ? '400px' : '0'
+3700:                right: (activeMessageId && !isMobile) ? `calc(${100 - chatWidth}% - ${(isSidebarOpen && !isMobile) ? sidebarWidth * (100 - chatWidth) / 100 : 0}px + 16px)` : '16px'
+3893:                                activeMessageId === art.id 
+4562:            right: (activeMessageId && !isMobile) ? `calc(${100 - chatWidth}% - ${(isSidebarOpen && !isMobile) ? sidebarWidth * (100 - chatWidth) / 100 : 0}px)` : '0px'
+5264:          {activeMessageId && !isMobile && (
+5277:          {activeMessageId && !isMobile && (
+5293:                    We couldn&apos;t extract a valid document from message {activeMessageId}. 
+5294:                    Reason: {!messages.find(m => m.id === activeMessageId) ? "Message no longer exists in state." : "The message doesn't contain a valid <document> tag."}
