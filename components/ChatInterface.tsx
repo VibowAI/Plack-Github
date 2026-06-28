@@ -72,6 +72,7 @@ import { Memory } from '@/lib/supabase/memories';
 import { detectMemoryIntent } from '@/lib/ai/intent';
 import { createDocument, saveDocument, getDocuments, DocumentRecord } from '@/lib/supabase/documents';
 import Auth from '@/components/Auth';
+import AuthGuard from '@/components/AuthGuard';
 import Sidebar from '@/components/Sidebar';
 import ConversationMinimap from '@/components/ConversationMinimap';
 import SearchSourcesSidebar from '@/components/SearchSourcesSidebar';
@@ -430,9 +431,10 @@ export default function Home() {
     }
     try {
       setIsZoomLoading(true);
-      const res = await fetch('/api/auth/zoom/url', {
+      const res = await fetch('/api/zoom/auth', {
         headers: {
-          'Authorization': `Bearer ${session.access_token}`
+          'Authorization': `Bearer ${session.access_token}`,
+          'Accept': 'application/json'
         }
       });
       if (!res.ok) {
