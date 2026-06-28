@@ -255,7 +255,7 @@ export default function Auth({ onClose }: { onClose?: () => void }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#020204] text-neutral-100 overflow-hidden font-sans select-none">
+    <div className="fixed inset-0 z-[999] flex items-center justify-center bg-[#020204] text-neutral-100 overflow-hidden font-sans select-none">
       
       {/* Optional Close Button for Landing-Page Modal representation */}
       {onClose && (

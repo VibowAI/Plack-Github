@@ -261,7 +261,9 @@ export default function Home() {
     setIsStreaming,
     accentColor,
     customColor,
-    setAccentColor
+    setAccentColor,
+    liveVoice,
+    setLiveVoiceContext
   } = useAppContext();
 
   // Smart Document Workspace Experience (Inline only now)
@@ -1925,7 +1927,7 @@ export default function Home() {
   const handleSaveLiveUserMessage = async (userText: string): Promise<string | null> => {
     const uId = session?.user?.id;
     if (!uId && !isTemporaryChat) return null;
-    let targetChatId = activeChatId;
+    let targetChatId = activeChatIdRef.current;
 
     try {
       let userMsgFormatted: Message;
@@ -1946,6 +1948,7 @@ export default function Home() {
           setChats(prev => [newChat, ...prev]);
           targetChatId = newChat.id;
           setActiveChatId(newChat.id);
+          activeChatIdRef.current = newChat.id;
 
           const slug = generateSlug(initialTitle || 'Voice Conversation', newChat.id);
           window.history.replaceState(null, '', `/chat/${slug}`);
@@ -1982,7 +1985,7 @@ export default function Home() {
   const handleSaveLiveAssistantMessage = async (assistantText: string): Promise<string | null> => {
     const uId = session?.user?.id;
     if (!uId && !isTemporaryChat) return null;
-    let targetChatId = activeChatId;
+    let targetChatId = activeChatIdRef.current;
 
     try {
       let modelMsgFormatted: Message;
@@ -2003,6 +2006,7 @@ export default function Home() {
           setChats(prev => [newChat, ...prev]);
           targetChatId = newChat.id;
           setActiveChatId(newChat.id);
+          activeChatIdRef.current = newChat.id;
 
           const slug = generateSlug(initialTitle, newChat.id);
           window.history.replaceState(null, '', `/chat/${slug}`);
@@ -3083,10 +3087,6 @@ export default function Home() {
       handleSubmit();
     }
   };
-
-  if (!session) {
-    return <Auth />;
-  }
 
   return (
     <main 
@@ -5911,14 +5911,15 @@ export default function Home() {
              {/* Global Settings Modal */}
         <AnimatePresence>
           {isSettingsOpen && (
-            <motion.div
-              key="settings-backdrop"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/40 backdrop-blur-md animate-fade-in"
-              onClick={() => setIsSettingsOpen(false)}
-            >
+            <AuthGuard>
+              <motion.div
+                key="settings-backdrop"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/40 backdrop-blur-md animate-fade-in"
+                onClick={() => setIsSettingsOpen(false)}
+              >
               <motion.div
                 initial={{ opacity: 0, scale: 0.95, y: 12 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -6595,6 +6596,72 @@ export default function Home() {
                     </div>
                   </div>
 
+                  {/* Voice Settings Section */}
+                  <div className="flex flex-col text-left select-none animate-fade-in">
+                    <span className={cn(
+                      "text-[9.5px] font-bold tracking-widest uppercase mb-1.5 ml-1 font-display",
+                      theme === 'light' ? "text-neutral-400" : "text-neutral-500"
+                    )}>
+                      Voice Settings
+                    </span>
+                    <div className={cn(
+                      "rounded-2xl border p-4.5 flex flex-col gap-4 relative overflow-hidden transition-all duration-200 shadow-sm",
+                      theme === 'light'
+                        ? "bg-neutral-50/70 border-neutral-200/60"
+                        : theme === 'cosmic'
+                          ? "bg-[#130d2e]/80 border-indigo-500/15"
+                          : "bg-neutral-900/40 border-neutral-800/80"
+                    )}>
+                      <div className="flex flex-col gap-0.5">
+                        <span className={cn("text-[12.5px] font-semibold tracking-tight", theme === 'light' ? "text-neutral-900" : "text-white")}>
+                          Plack Live Voice
+                        </span>
+                        <span className={cn("text-[11px]", theme === 'light' ? "text-neutral-500" : "text-neutral-400")}>
+                          Choose the voice used during real-time conversational mode.
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 py-1">
+                        {[
+                          { id: 'Puck', label: 'Puck (Quirky)' },
+                          { id: 'Charon', label: 'Charon (Deep)' },
+                          { id: 'Kore', label: 'Kore (Calm)' },
+                          { id: 'Fenrir', label: 'Fenrir (Energetic)' },
+                          { id: 'Aoede', label: 'Aoede (Warm)' }
+                        ].map((voiceOpt) => {
+                          const isActive = liveVoice === voiceOpt.id;
+                          return (
+                            <button
+                              type="button"
+                              key={voiceOpt.id}
+                              onClick={() => setLiveVoiceContext(voiceOpt.id)}
+                              className={cn(
+                                "flex items-center justify-between p-3 rounded-xl border text-left transition-all duration-200 cursor-pointer relative overflow-hidden",
+                                isActive
+                                  ? theme === 'light'
+                                    ? "bg-white border-neutral-900 shadow-sm font-semibold"
+                                    : theme === 'cosmic'
+                                      ? "bg-indigo-600/10 border-indigo-500 text-indigo-100 shadow-[0_0_15px_rgba(99,102,241,0.25)] font-semibold"
+                                      : "bg-white/5 border-white text-white font-semibold"
+                                  : theme === 'light'
+                                    ? "bg-white/50 border-neutral-200/70 text-neutral-600 hover:bg-neutral-100/50 hover:border-neutral-300"
+                                    : "bg-neutral-850/30 border-neutral-800/80 text-neutral-400 hover:bg-neutral-800/50 hover:border-neutral-700"
+                              )}
+                            >
+                              <span className="text-[12px] tracking-tight">{voiceOpt.label}</span>
+                              {isActive && (
+                                <span className="absolute right-3 flex h-1.5 w-1.5 relative">
+                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-indigo-500"></span>
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
                   {/* Models Configuration Section */}
                   <div className="flex flex-col text-left select-none animate-fade-in">
                     <span className={cn(
@@ -6769,6 +6836,7 @@ export default function Home() {
                  </div>
               </motion.div>
             </motion.div>
+            </AuthGuard>
           )}
         </AnimatePresence>
 
@@ -6998,6 +7066,7 @@ export default function Home() {
         {/* Memory Manager Modal */}
         <AnimatePresence>
           {isMemoryManagerOpen && (
+            <AuthGuard>
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -7322,6 +7391,7 @@ export default function Home() {
                 </div>
               </motion.div>
             </motion.div>
+            </AuthGuard>
           )}
         </AnimatePresence>
 
@@ -7388,7 +7458,9 @@ export default function Home() {
           theme={theme}
           userEmail={session?.user?.email}
           userId={session?.user?.id}
+          liveVoice={liveVoice}
           activeChatId={activeChatId}
+          chatHistory={messages}
           onSaveLiveMessages={handleSaveLiveMessages}
           onSaveLiveUserMessage={handleSaveLiveUserMessage}
           onSaveLiveAssistantMessage={handleSaveLiveAssistantMessage}

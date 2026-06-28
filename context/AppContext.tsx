@@ -24,6 +24,8 @@ interface AppContextType {
   isSidebarOpen: boolean;
   isMobile: boolean;
   setThemeSetting: (setting: ThemeSetting) => void;
+  liveVoice: string;
+  setLiveVoiceContext: (voice: string) => Promise<void>;
   setIsSidebarOpen: (open: boolean) => void;
   setSidebarWidth: (width: number) => void;
   onNewChat: () => Promise<void>;
@@ -58,6 +60,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [theme, setTheme] = useState<ThemeMode>('light');
   const [accentColor, setAccentColorState] = useState<AccentColor>('blue');
   const [customColor, setCustomColor] = useState<string>('#ff007f');
+  const [liveVoice, setLiveVoice] = useState<string>('Aoede');
   const [isMounted, setIsMounted] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(280);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -109,6 +112,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           setCustomColor(meta.custom_color);
           localStorage.setItem('plack-custom-color', meta.custom_color);
         }
+        if (meta.live_voice) {
+          setLiveVoice(meta.live_voice);
+        }
       }
     });
 
@@ -123,6 +129,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (meta.custom_color) {
           setCustomColor(meta.custom_color);
           localStorage.setItem('plack-custom-color', meta.custom_color);
+        }
+        if (meta.live_voice) {
+          setLiveVoice(meta.live_voice);
         }
       }
     });
@@ -167,11 +176,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const setLiveVoiceContext = async (voice: string) => {
+    setLiveVoice(voice);
+    if (session?.user) {
+      try {
+        await supabase.auth.updateUser({
+          data: {
+            live_voice: voice
+          }
+        });
+      } catch (err) {
+        console.warn("[METADATA UPDATE WARNING]", err);
+      }
+    }
+  };
+
   // Auth Router redirection guards
   useEffect(() => {
     if (session === null) return; // Wait until session loads
 
-    const isGuardedRoute = pathname === '/' || pathname.startsWith('/chat') || pathname.startsWith('/connections');
+    const isGuardedRoute = pathname.startsWith('/connections');
     
     if (!session) {
       if (isGuardedRoute) {
@@ -349,6 +373,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       isSidebarOpen,
       isMobile,
       setThemeSetting,
+      liveVoice,
+      setLiveVoiceContext,
       setIsSidebarOpen,
       setSidebarWidth,
       onNewChat,

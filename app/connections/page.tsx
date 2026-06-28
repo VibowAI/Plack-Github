@@ -3,6 +3,7 @@
 import React from 'react';
 import Sidebar from '@/components/Sidebar';
 import ConnectionsView from '@/components/ConnectionsView';
+import AuthGuard from '@/components/AuthGuard';
 import { useAppContext } from '@/context/AppContext';
 import { useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
@@ -58,21 +59,23 @@ export default function ConnectionsPage() {
   };
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
-      <Sidebar />
-      
-      <main className="flex-1 relative overflow-hidden">
-        <ConnectionsView
-          theme={theme}
-          zoomEmail={zoomEmail}
-          onConnectZoom={handleConnectZoom}
-          onDisconnectZoom={handleDisconnectZoom}
-          onClose={() => router.push('/')}
-          isSidebarOpen={isSidebarOpen}
-          sidebarWidth={sidebarWidth}
-          isMobile={isMobile}
-        />
-      </main>
-    </div>
+    <AuthGuard>
+      <div className="flex h-screen overflow-hidden bg-background">
+        <Sidebar />
+        
+        <main className="flex-1 relative overflow-hidden">
+          <ConnectionsView
+            theme={theme}
+            zoomEmail={zoomEmail}
+            onConnectZoom={handleConnectZoom}
+            onDisconnectZoom={handleDisconnectZoom}
+            onClose={() => router.push('/')}
+            isSidebarOpen={isSidebarOpen}
+            sidebarWidth={sidebarWidth}
+            isMobile={isMobile}
+          />
+        </main>
+      </div>
+    </AuthGuard>
   );
 }

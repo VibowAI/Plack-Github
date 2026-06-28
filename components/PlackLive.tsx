@@ -7,7 +7,12 @@ import {
   Mic, 
   MicOff, 
   Radio, 
-  AlertCircle
+  AlertCircle,
+  Pause,
+  Play,
+  Volume2,
+  MonitorUp,
+  Video
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/lib/utils';
@@ -32,6 +37,8 @@ interface PlackLiveProps {
   isSourcesSidebarOpen: boolean;
   sourcesWidth: number;
   isMobile: boolean;
+  liveVoice?: string;
+  chatHistory?: any[];
 }
 
 export default function PlackLive({ 
@@ -49,7 +56,9 @@ export default function PlackLive({
   sidebarWidth,
   isSourcesSidebarOpen,
   sourcesWidth,
-  isMobile
+  isMobile,
+  liveVoice = 'Aoede',
+  chatHistory = []
 }: PlackLiveProps) {
   const [voiceState, setVoiceStateState] = useState<VoiceState>('Ready');
   const voiceStateRef = useRef<VoiceState>('Ready');
@@ -267,18 +276,33 @@ export default function PlackLive({
 
       const ai = new GoogleGenAI({ apiKey });
 
+      // Format chat history into a concise prompt for context
+      let historyContext = "";
+      if (chatHistory && chatHistory.length > 0) {
+        historyContext = "\n\nHere is the ongoing conversation history for context:\n";
+        const recentHistory = chatHistory.slice(-10);
+        recentHistory.forEach(msg => {
+          const role = msg.role === 'user' ? 'User' : 'Assistant';
+          historyContext += `${role}: ${msg.content}\n`;
+        });
+      }
+
       // Connect to Gemini Live Session
       const session = await ai.live.connect({
         model: "models/gemini-3.1-flash-live-preview",
         config: {
           responseModalities: [Modality.AUDIO],
+          systemInstruction: {
+            parts: [{ text: "You are Plack AI's Voice Assistant. Speak naturally, concisely, and fluidly. Use a conversational tone appropriate for voice interactions." + historyContext }]
+          },
+          tools: [{ googleSearch: {} }],
           outputAudioTranscription: {},
           inputAudioTranscription: {},
           generationConfig: {
             speechConfig: {
               voiceConfig: {
                 prebuiltVoiceConfig: {
-                  voiceName: "Aoede" // Modern, human-like voice selection 
+                  voiceName: liveVoice 
                 }
               }
             }
@@ -635,7 +659,7 @@ export default function PlackLive({
         exit={{ opacity: 0, y: 120 }}
         transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
         className={cn(
-          "fixed bottom-0 z-[95] flex flex-col items-center justify-end overflow-hidden select-none pb-6 pt-16 font-sans h-[160px] pointer-events-none",
+          "fixed bottom-0 z-[95] flex flex-col items-center justify-end overflow-hidden select-none pb-8 pt-16 font-sans h-[260px] pointer-events-none",
           theme === 'light'
             ? "bg-gradient-to-t from-white via-white/80 to-transparent text-neutral-800"
             : theme === 'cosmic'
@@ -703,52 +727,119 @@ export default function PlackLive({
             </AnimatePresence>
           </div>
 
-          {/* Row 2: Waveform Visualization */}
-          <div className="w-full h-[32px] flex items-center justify-center relative select-none pointer-events-none">
-            <canvas ref={canvasRef} className="w-full h-full block opacity-90" />
+          {/* Row 2: Animated Orb */}
+          <div className="w-full h-[100px] flex items-center justify-center relative select-none pointer-events-none my-2">
+            {/* The glowing orb */}
+            <motion.div
+              className={cn(
+                "rounded-full absolute z-10 flex items-center justify-center shadow-[0_0_40px_rgba(99,102,241,0.6)]",
+                voiceState === 'Speaking' ? "bg-blue-500" : voiceState === 'Listening' ? "bg-indigo-500" : voiceState === 'Thinking' ? "bg-purple-500" : "bg-neutral-600"
+              )}
+              animate={{ 
+                scale: 1 + audioLevel * 0.4,
+                opacity: 0.8 + audioLevel * 0.2
+              }}
+              transition={{ type: "spring", stiffness: 300, damping: 20 }}
+              style={{ width: 64, height: 64 }}
+            />
+            {/* Background ripple rings */}
+            <motion.div
+              className={cn(
+                "rounded-full absolute border-2",
+                voiceState === 'Speaking' ? "border-blue-400" : "border-indigo-400"
+              )}
+              animate={{
+                scale: 1 + audioLevel * 0.8,
+                opacity: Math.max(0, 0.4 - audioLevel)
+              }}
+              transition={{ type: "spring", stiffness: 100, damping: 30 }}
+              style={{ width: 80, height: 80 }}
+            />
+            <motion.div
+              className={cn(
+                "rounded-full absolute border",
+                voiceState === 'Speaking' ? "border-blue-300" : "border-indigo-300"
+              )}
+              animate={{
+                scale: 1 + audioLevel * 1.5,
+                opacity: Math.max(0, 0.2 - audioLevel)
+              }}
+              transition={{ type: "spring", stiffness: 80, damping: 40 }}
+              style={{ width: 100, height: 100 }}
+            />
+            <canvas ref={canvasRef} className="hidden" />
           </div>
 
           {/* Row 3: Central control keys */}
-          <div className="flex items-center justify-center gap-4 mt-2">
+          <div className="flex items-center justify-center gap-3 mt-4">
             
-            {/* Pause/Mute Toggle */}
-            {voiceState !== 'Connection Lost' && (
-              <button
-                onClick={handleToggleMute}
-                disabled={voiceState === 'Connection Lost'}
-                className={cn(
-                  "flex items-center justify-center gap-2 px-5 py-2.5 rounded-full transition-all duration-300 text-[13px] font-medium active:scale-95 disabled:opacity-30 disabled:pointer-events-none cursor-pointer select-none",
-                  isMuted
-                    ? "bg-neutral-800 text-neutral-300 hover:bg-neutral-700 backdrop-blur-md"
-                    : theme === 'light'
-                      ? "bg-neutral-200/60 hover:bg-neutral-200 text-neutral-800 backdrop-blur-md"
-                      : "bg-white/10 hover:bg-white/15 text-white backdrop-blur-md"
-                )}
-                title={isMuted ? "Resume" : "Pause"}
-              >
-                {isMuted ? <MicOff size={16} /> : <Mic size={16} />}
-                <span>{isMuted ? "Resume" : "Pause"}</span>
-              </button>
-            )}
+            {/* Pause Toggle */}
+            <button
+              onClick={handleToggleMute}
+              className={cn(
+                "flex items-center justify-center w-[46px] h-[46px] rounded-full transition-all duration-300 active:scale-95 cursor-pointer select-none",
+                isMuted
+                  ? "bg-neutral-800 text-neutral-300 hover:bg-neutral-700"
+                  : theme === 'light'
+                    ? "bg-neutral-200/60 hover:bg-neutral-200 text-neutral-800"
+                    : "bg-white/10 hover:bg-white/15 text-white"
+              )}
+              title={isMuted ? "Resume" : "Pause"}
+            >
+              {isMuted ? <Play size={20} /> : <Pause size={20} />}
+            </button>
 
-            {/* Retry Connection Button */}
-            {voiceState === 'Connection Lost' && (
-              <button
-                onClick={() => {
-                  setVoiceState('Ready');
-                  setSubtitleText('Initializing...');
-                  initMicrophoneAndLiveSession();
-                }}
-                className={cn(
-                  "flex items-center justify-center gap-2 px-5 py-2.5 rounded-full transition-all duration-300 text-[13px] font-medium active:scale-95 cursor-pointer select-none",
-                  "bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20"
-                )}
-                title="Retry Connection"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
-                <span>Retry</span>
-              </button>
-            )}
+            {/* Microphone Toggle */}
+            <button
+              className={cn(
+                "flex items-center justify-center w-[46px] h-[46px] rounded-full transition-all duration-300 active:scale-95 cursor-pointer select-none",
+                theme === 'light'
+                  ? "bg-neutral-200/60 hover:bg-neutral-200 text-neutral-800"
+                  : "bg-white/10 hover:bg-white/15 text-white"
+              )}
+              title="Microphone"
+            >
+              <Mic size={20} />
+            </button>
+
+            {/* Speaker Toggle */}
+            <button
+              className={cn(
+                "flex items-center justify-center w-[46px] h-[46px] rounded-full transition-all duration-300 active:scale-95 cursor-pointer select-none",
+                theme === 'light'
+                  ? "bg-neutral-200/60 hover:bg-neutral-200 text-neutral-800"
+                  : "bg-white/10 hover:bg-white/15 text-white"
+              )}
+              title="Speaker"
+            >
+              <Volume2 size={20} />
+            </button>
+
+            {/* Share Screen */}
+            <button
+              className={cn(
+                "flex items-center justify-center w-[46px] h-[46px] rounded-full transition-all duration-300 active:scale-95 cursor-pointer select-none",
+                theme === 'light'
+                  ? "bg-neutral-200/60 hover:bg-neutral-200 text-neutral-800"
+                  : "bg-white/10 hover:bg-white/15 text-white"
+              )}
+              title="Share Screen"
+            >
+              <MonitorUp size={20} />
+            </button>
+
+            {/* Video Call */}
+            <button
+              className={cn(
+                "flex items-center justify-center w-[46px] h-[46px] rounded-full transition-all duration-300 active:scale-95 cursor-pointer select-none",
+                theme === 'light'
+                  ? "bg-neutral-200/60 hover:bg-neutral-200 text-neutral-800"
+                  : "bg-white/10 hover:bg-white/15 text-white"
+              )}
+              title="Video Call"
+            >
+              <Video size={20} />
+            </button>
 
             {/* End Session Button */}
             <button
@@ -757,10 +848,10 @@ export default function PlackLive({
                 cleanUpSession();
                 onClose();
               }}
-              className="flex items-center justify-center px-4 py-2.5 rounded-full bg-red-500 hover:bg-red-600 active:scale-95 text-white transition-all duration-300 shadow-[0_0_20px_rgba(239,68,68,0.3)] cursor-pointer select-none"
+              className="flex items-center justify-center w-[46px] h-[46px] rounded-full bg-red-500 hover:bg-red-600 active:scale-95 text-white transition-all duration-300 shadow-[0_0_20px_rgba(239,68,68,0.3)] cursor-pointer select-none"
               title="End Voice Session"
             >
-              <PhoneOff size={18} fill="currentColor" />
+              <PhoneOff size={20} fill="currentColor" />
             </button>
 
           </div>
