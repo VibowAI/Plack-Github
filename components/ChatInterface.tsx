@@ -393,6 +393,7 @@ export default function Home() {
   const isTemporaryChat = false;
   const setIsTemporaryChat = (val: boolean) => {};
   const [isManageExpanded, setIsManageExpanded] = useState(false);
+  const [draftRestoredNote, setDraftRestoredNote] = useState<string | null>(null);
 
   // Zoom Integration States & Handlers
   const [zoomEmail, setZoomEmail] = useState<string | null>(null);
