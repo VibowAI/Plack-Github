@@ -24,6 +24,8 @@ interface PlackLiveProps {
   userId?: string;
   activeChatId?: string | null;
   onSaveLiveMessages?: (userText: string, assistantText: string) => Promise<string | null>;
+  onSaveLiveUserMessage?: (text: string) => Promise<string | null>;
+  onSaveLiveAssistantMessage?: (text: string) => Promise<string | null>;
   onLiveTranscriptUpdate?: (transcript: { userText: string, aiText: string }) => void;
   isSidebarOpen: boolean;
   sidebarWidth: number;
@@ -40,6 +42,8 @@ export default function PlackLive({
   userId,
   activeChatId,
   onSaveLiveMessages,
+  onSaveLiveUserMessage,
+  onSaveLiveAssistantMessage,
   onLiveTranscriptUpdate,
   isSidebarOpen,
   sidebarWidth,
@@ -71,6 +75,16 @@ export default function PlackLive({
   useEffect(() => {
     saveLiveMessagesRef.current = onSaveLiveMessages;
   }, [onSaveLiveMessages]);
+
+  const saveLiveUserMessageRef = useRef(onSaveLiveUserMessage);
+  useEffect(() => {
+    saveLiveUserMessageRef.current = onSaveLiveUserMessage;
+  }, [onSaveLiveUserMessage]);
+
+  const saveLiveAssistantMessageRef = useRef(onSaveLiveAssistantMessage);
+  useEffect(() => {
+    saveLiveAssistantMessageRef.current = onSaveLiveAssistantMessage;
+  }, [onSaveLiveAssistantMessage]);
 
   // Real-time audio analyzer properties for animations
   const [audioLevel, setAudioLevel] = useState(0); 
@@ -275,10 +289,15 @@ export default function PlackLive({
             // Check for user-spoken transcription
             const inputTranscription = message.serverContent?.inputTranscription;
             if (inputTranscription?.text) {
-              currentUserTextRef.current = inputTranscription.text;
-              onLiveTranscriptUpdate?.({ userText: currentUserTextRef.current, aiText: currentAiTextRef.current });
-              console.log("[AUDIO SENT & TRANSCRIBED]", inputTranscription.text);
-              console.log("[NEW TURN STARTED]");
+              const uText = inputTranscription.text.trim();
+              if (uText) {
+                currentUserTextRef.current = uText;
+                console.log("[AUDIO SENT & TRANSCRIBED]", uText);
+                console.log("[NEW TURN STARTED]");
+                saveLiveUserMessageRef.current?.(uText);
+                onLiveTranscriptUpdate?.({ userText: uText, aiText: currentAiTextRef.current });
+                console.log("[LIVE TRANSCRIPT UPDATED]");
+              }
             }
 
             // Check for model incoming spoken content
@@ -289,6 +308,7 @@ export default function PlackLive({
                 if (part.text) {
                   currentAiTextRef.current += part.text;
                   onLiveTranscriptUpdate?.({ userText: currentUserTextRef.current, aiText: currentAiTextRef.current });
+                  console.log("[LIVE TRANSCRIPT UPDATED]");
                 }
                 if (part.inlineData?.data) {
                   playAudioChunk(part.inlineData.data);
@@ -303,23 +323,30 @@ export default function PlackLive({
               console.log("[USER TOOK CONTROL]");
               stopAllPlayback();
               console.log("[PLAYBACK STOPPED]");
+              
+              const aText = currentAiTextRef.current.trim();
+              if (aText) {
+                saveLiveAssistantMessageRef.current?.(aText);
+              }
+              
+              currentUserTextRef.current = "";
+              currentAiTextRef.current = "";
+              onLiveTranscriptUpdate?.({ userText: '', aiText: '' });
+              console.log("[LIVE TRANSCRIPT UPDATED]");
               setVoiceState('Listening');
             }
 
             // Save completed conversational turn in the chat system once complete
             if (message.serverContent?.turnComplete) {
-              const uText = currentUserTextRef.current.trim();
               const aText = currentAiTextRef.current.trim();
-              
-              if (uText || aText) {
-                console.log("[MESSAGE SAVED] Saving completed voice interaction to database...", { uText, aText });
-                saveLiveMessagesRef.current?.(uText, aText);
-                
-                // Clear state containers for the next conversational turn
-                currentUserTextRef.current = "";
-                currentAiTextRef.current = "";
-                onLiveTranscriptUpdate?.({ userText: '', aiText: '' });
+              if (aText) {
+                saveLiveAssistantMessageRef.current?.(aText);
               }
+              
+              currentUserTextRef.current = "";
+              currentAiTextRef.current = "";
+              onLiveTranscriptUpdate?.({ userText: '', aiText: '' });
+              console.log("[LIVE TRANSCRIPT UPDATED]");
               setVoiceState('Listening');
             }
           },
@@ -685,22 +712,43 @@ export default function PlackLive({
           <div className="flex items-center justify-center gap-4 mt-2">
             
             {/* Pause/Mute Toggle */}
-            <button
-              onClick={handleToggleMute}
-              disabled={voiceState === 'Connection Lost'}
-              className={cn(
-                "flex items-center justify-center gap-2 px-5 py-2.5 rounded-full transition-all duration-300 text-[13px] font-medium active:scale-95 disabled:opacity-30 disabled:pointer-events-none cursor-pointer select-none",
-                isMuted
-                  ? "bg-neutral-800 text-neutral-300 hover:bg-neutral-700 backdrop-blur-md"
-                  : theme === 'light'
-                    ? "bg-neutral-200/60 hover:bg-neutral-200 text-neutral-800 backdrop-blur-md"
-                    : "bg-white/10 hover:bg-white/15 text-white backdrop-blur-md"
-              )}
-              title={isMuted ? "Resume" : "Pause"}
-            >
-              {isMuted ? <MicOff size={16} /> : <Mic size={16} />}
-              <span>{isMuted ? "Resume" : "Pause"}</span>
-            </button>
+            {voiceState !== 'Connection Lost' && (
+              <button
+                onClick={handleToggleMute}
+                disabled={voiceState === 'Connection Lost'}
+                className={cn(
+                  "flex items-center justify-center gap-2 px-5 py-2.5 rounded-full transition-all duration-300 text-[13px] font-medium active:scale-95 disabled:opacity-30 disabled:pointer-events-none cursor-pointer select-none",
+                  isMuted
+                    ? "bg-neutral-800 text-neutral-300 hover:bg-neutral-700 backdrop-blur-md"
+                    : theme === 'light'
+                      ? "bg-neutral-200/60 hover:bg-neutral-200 text-neutral-800 backdrop-blur-md"
+                      : "bg-white/10 hover:bg-white/15 text-white backdrop-blur-md"
+                )}
+                title={isMuted ? "Resume" : "Pause"}
+              >
+                {isMuted ? <MicOff size={16} /> : <Mic size={16} />}
+                <span>{isMuted ? "Resume" : "Pause"}</span>
+              </button>
+            )}
+
+            {/* Retry Connection Button */}
+            {voiceState === 'Connection Lost' && (
+              <button
+                onClick={() => {
+                  setVoiceState('Ready');
+                  setSubtitleText('Initializing...');
+                  initMicrophoneAndLiveSession();
+                }}
+                className={cn(
+                  "flex items-center justify-center gap-2 px-5 py-2.5 rounded-full transition-all duration-300 text-[13px] font-medium active:scale-95 cursor-pointer select-none",
+                  "bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20"
+                )}
+                title="Retry Connection"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+                <span>Retry</span>
+              </button>
+            )}
 
             {/* End Session Button */}
             <button

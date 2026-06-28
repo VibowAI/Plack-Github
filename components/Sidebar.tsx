@@ -1076,6 +1076,23 @@ export default function Sidebar({
                   <Search size={16} />
                   <span>Search Chats</span>
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    onOpenConnections?.();
+                    setIsOpen(false);
+                  }}
+                  className={cn(
+                    "w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl transition-all duration-205 active:scale-98 cursor-pointer text-[13px] font-bold border shadow-xs select-none",
+                    pathname === '/connections'
+                      ? (theme === 'light' ? "bg-neutral-900 text-white border-neutral-900" : "bg-white text-black border-white")
+                      : (theme === 'light' ? "bg-white hover:bg-neutral-100 border-neutral-200 text-neutral-800" : "bg-neutral-900 hover:bg-neutral-800 border-neutral-700 text-white")
+                  )}
+                >
+                  <Workflow size={16} />
+                  <span>Connections</span>
+                </button>
               </div>
             </div>
           ) : (

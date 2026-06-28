@@ -390,8 +390,7 @@ export default function Home() {
 
   // Appearance Switching and settings states
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const isTemporaryChat = false;
-  const setIsTemporaryChat = (val: boolean) => {};
+  const [isTemporaryChat, setIsTemporaryChat] = useState(false);
   const [isManageExpanded, setIsManageExpanded] = useState(false);
   const [draftRestoredNote, setDraftRestoredNote] = useState<string | null>(null);
 
@@ -1920,6 +1919,112 @@ export default function Home() {
       const titleDuration = Date.now() - titleStartTime;
       logger.reportPerformance("Title Generation", titleDuration, { chatId });
       activeTitleRequestsRef.current[chatId] = false;
+    }
+  };
+
+  const handleSaveLiveUserMessage = async (userText: string): Promise<string | null> => {
+    const uId = session?.user?.id;
+    if (!uId && !isTemporaryChat) return null;
+    let targetChatId = activeChatId;
+
+    try {
+      let userMsgFormatted: Message;
+
+      if (isTemporaryChat) {
+        targetChatId = 'temporary';
+        userMsgFormatted = {
+          id: `temp-user-${Date.now()}-${Math.random()}`,
+          role: 'user',
+          content: userText,
+          attachments: []
+        };
+      } else {
+        // Create new chat if not exists
+        if (!targetChatId) {
+          const initialTitle = userText.length > 30 ? userText.substring(0, 30) + "..." : userText;
+          const newChat = await createChat(uId!, initialTitle || "Voice Conversation");
+          setChats(prev => [newChat, ...prev]);
+          targetChatId = newChat.id;
+          setActiveChatId(newChat.id);
+
+          const slug = generateSlug(initialTitle || 'Voice Conversation', newChat.id);
+          window.history.replaceState(null, '', `/chat/${slug}`);
+        }
+
+        const chatIdStr = targetChatId!;
+        const userMsg = await saveMessage(chatIdStr, 'user', userText);
+        userMsgFormatted = {
+          id: userMsg.id.toString(),
+          role: 'user',
+          content: userText,
+          attachments: []
+        };
+      }
+
+      setMessages(prev => [...prev, userMsgFormatted]);
+      console.log("[LIVE USER MESSAGE SAVED]", userText);
+
+      // Trigger smart title generation check if it wasn't generated yet and not temporary
+      if (!isTemporaryChat && targetChatId) {
+        const currentChat = chats.find(c => c.id === targetChatId);
+        if (!currentChat || currentChat.title_generated === false) {
+          executeTitleGeneration(targetChatId, userText);
+        }
+      }
+
+      return targetChatId;
+    } catch (err) {
+      console.error("Failed saving live user message:", err);
+      return null;
+    }
+  };
+
+  const handleSaveLiveAssistantMessage = async (assistantText: string): Promise<string | null> => {
+    const uId = session?.user?.id;
+    if (!uId && !isTemporaryChat) return null;
+    let targetChatId = activeChatId;
+
+    try {
+      let modelMsgFormatted: Message;
+
+      if (isTemporaryChat) {
+        targetChatId = 'temporary';
+        modelMsgFormatted = {
+          id: `temp-model-${Date.now()}-${Math.random()}`,
+          role: 'model',
+          content: assistantText,
+          attachments: []
+        };
+      } else {
+        if (!targetChatId) {
+          // If no active chat, fallback (should not happen normally)
+          const initialTitle = "Voice Conversation";
+          const newChat = await createChat(uId!, initialTitle);
+          setChats(prev => [newChat, ...prev]);
+          targetChatId = newChat.id;
+          setActiveChatId(newChat.id);
+
+          const slug = generateSlug(initialTitle, newChat.id);
+          window.history.replaceState(null, '', `/chat/${slug}`);
+        }
+
+        const chatIdStr = targetChatId!;
+        const modelMsg = await saveMessage(chatIdStr, 'model', assistantText);
+        modelMsgFormatted = {
+          id: modelMsg.id.toString(),
+          role: 'model',
+          content: assistantText,
+          attachments: []
+        };
+      }
+
+      setMessages(prev => [...prev, modelMsgFormatted]);
+      console.log("[LIVE AI RESPONSE SAVED]", assistantText);
+
+      return targetChatId;
+    } catch (err) {
+      console.error("Failed saving live assistant message:", err);
+      return null;
     }
   };
 
@@ -7285,6 +7390,8 @@ export default function Home() {
           userId={session?.user?.id}
           activeChatId={activeChatId}
           onSaveLiveMessages={handleSaveLiveMessages}
+          onSaveLiveUserMessage={handleSaveLiveUserMessage}
+          onSaveLiveAssistantMessage={handleSaveLiveAssistantMessage}
           onLiveTranscriptUpdate={setLiveTranscript}
           isSidebarOpen={isSidebarOpen}
           sidebarWidth={sidebarWidth}
