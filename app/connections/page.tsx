@@ -44,7 +44,7 @@ export default function ConnectionsPage() {
 
   const handleConnectZoom = () => {
     // Zoom OAuth logic
-    window.location.href = `/api/zoom/auth?userId=${session?.user?.id}`;
+    window.location.href = `/api/auth/zoom?userId=${session?.user?.id}`;
   };
 
   const handleDisconnectZoom = async () => {

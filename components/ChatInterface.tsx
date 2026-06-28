@@ -431,7 +431,7 @@ export default function Home() {
     }
     try {
       setIsZoomLoading(true);
-      const res = await fetch('/api/zoom/auth', {
+      const res = await fetch('/api/auth/zoom', {
         headers: {
           'Authorization': `Bearer ${session.access_token}`,
           'Accept': 'application/json'
