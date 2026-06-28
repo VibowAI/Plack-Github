@@ -2220,7 +2220,7 @@ app.get('/api/config', async (c) => {
 });
 
 // 19. Serves fallback index.html for React SPA Routing on GET *
-app.get('*', async (c) => {
+app.get('*', async (c, next) => {
   const url = new URL(c.req.url);
   
   // Diagnostic logs
@@ -2231,13 +2231,13 @@ app.get('*', async (c) => {
 
   // If request contains extension (files like .js, .css, .png, etc.), or is /api/* request, let it go.
   if (url.pathname.startsWith('/api') || url.pathname.includes('.')) {
-    return c.next();
+    return next();
   }
   
   // If ASSETS binding is missing (usually in development), let Vite dev server handle it
   if (!assetsAvailable) {
     if (runtime === 'development') {
-      return c.next();
+      return next();
     }
     return c.text("Asset serving index error: ASSETS binding is not configured in this environment.", 500);
   }
