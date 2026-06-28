@@ -153,7 +153,7 @@ export async function deleteChat(chatId: string) {
         .select('storage_path')
         .in('message_id', messageIds);
 
-      const paths = Array.from(new Set(attachments?.map(a => a.storage_path).filter(Boolean)));
+      const paths = Array.from(new Set((attachments || []).map(a => a.storage_path).filter(Boolean)));
 
       if (paths.length > 0) {
         // 3. For each path, check if it's used in any OTHER message

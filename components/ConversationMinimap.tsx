@@ -21,7 +21,7 @@ export default function ConversationMinimap({ messages, theme }: ConversationMin
   const [isCollapsed, setIsCollapsed] = useState(false);
 
   // Extract only user messages
-  const userMessages = messages.filter(m => m.role === 'user' && m.content?.trim().length > 0);
+  const userMessages = (messages || []).filter(m => m.role === 'user' && m.content?.trim().length > 0);
 
   useEffect(() => {
     let rAFId: number;

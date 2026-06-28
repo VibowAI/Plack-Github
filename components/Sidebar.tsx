@@ -708,8 +708,8 @@ export default function Sidebar({
     }
   };
 
-  const pinnedChats = chats.filter(c => c.is_pinned);
-  const regularChats = chats.filter(c => !c.is_pinned);
+  const pinnedChats = (chats || []).filter(c => c.is_pinned);
+  const regularChats = (chats || []).filter(c => !c.is_pinned);
 
   // Pagination slicing mimicking infinite scroll
   const visibleRegularChats = regularChats.slice(0, visibleCount);
