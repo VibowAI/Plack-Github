@@ -59,6 +59,17 @@ CREATE TABLE IF NOT EXISTS public.message_feedback (
 );
 ALTER TABLE public.message_feedback ENABLE ROW LEVEL SECURITY;
 
+-- 5.1 Message Versions
+CREATE TABLE IF NOT EXISTS public.message_versions (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  parent_message_id uuid NOT NULL REFERENCES public.messages(id) ON DELETE CASCADE,
+  response_content text NOT NULL,
+  version_number integer NOT NULL,
+  created_at timestamptz DEFAULT now() NOT NULL,
+  PRIMARY KEY (id)
+);
+ALTER TABLE public.message_versions ENABLE ROW LEVEL SECURITY;
+
 -- 6. Web Search Usage
 CREATE TABLE IF NOT EXISTS public.web_search_usage (
   id uuid DEFAULT gen_random_uuid() NOT NULL,
@@ -130,6 +141,12 @@ DROP POLICY IF EXISTS "Users can delete own feedback" ON public.message_feedback
 CREATE POLICY "Users can delete own feedback" ON public.message_feedback FOR DELETE USING (auth.uid() = user_id);
 DROP POLICY IF EXISTS "Users can view own feedback" ON public.message_feedback;
 CREATE POLICY "Users can view own feedback" ON public.message_feedback FOR SELECT USING (auth.uid() = user_id);
+
+-- Message Versions
+DROP POLICY IF EXISTS "Users can view own message_versions" ON public.message_versions;
+CREATE POLICY "Users can view own message_versions" ON public.message_versions FOR SELECT USING (EXISTS (SELECT 1 FROM public.messages m JOIN public.chats c ON m.chat_id = c.id WHERE m.id = parent_message_id AND c.user_id = auth.uid()));
+DROP POLICY IF EXISTS "Users can insert own message_versions" ON public.message_versions;
+CREATE POLICY "Users can insert own message_versions" ON public.message_versions FOR INSERT WITH CHECK (EXISTS (SELECT 1 FROM public.messages m JOIN public.chats c ON m.chat_id = c.id WHERE m.id = parent_message_id AND c.user_id = auth.uid()));
 
 -- Search
 DROP POLICY IF EXISTS "Users can insert own web search usage" ON public.web_search_usage;

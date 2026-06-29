@@ -886,7 +886,7 @@ app.post('/api/user/delete', async (c) => {
       }
     });
 
-    const tables = ['usage_logs', 'message_feedback', 'message_attachments', 'messages', 'chats', 'profiles'];
+    const tables = ['usage_logs', 'message_feedback', 'message_versions', 'message_attachments', 'messages', 'chats', 'profiles'];
     for (const table of tables) {
       const { error } = await supabaseAdmin
         .from(table)

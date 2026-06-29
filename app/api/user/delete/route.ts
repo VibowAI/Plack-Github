@@ -28,7 +28,7 @@ export async function POST(req: Request) {
 
     // 1. Permanently delete user-owned application data
     // Delete from usage_logs, message_feedback, message_attachments, messages, chats, profiles
-    const tables = ['usage_logs', 'message_feedback', 'message_attachments', 'messages', 'chats', 'profiles'];
+    const tables = ['usage_logs', 'message_feedback', 'message_versions', 'message_attachments', 'messages', 'chats', 'profiles'];
     for (const table of tables) {
       const { error } = await supabaseAdmin
         .from(table)

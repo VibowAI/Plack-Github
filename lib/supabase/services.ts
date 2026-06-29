@@ -509,8 +509,8 @@ export async function saveAttachmentRecord(attachment: {
 export async function getMessageReactions(userId: string, chatId: string) {
   const supabase = createClient();
   const { data, error } = await supabase
-    .from('message_reactions')
-    .select('message_id, reaction')
+    .from('message_feedback')
+    .select('message_id, reaction:feedback_type')
     .eq('user_id', userId)
     .eq('chat_id', chatId);
   if (error) {
@@ -524,7 +524,7 @@ export async function setMessageReaction(userId: string, chatId: string, message
   const supabase = createClient();
   if (reaction === null) {
     const { error } = await supabase
-      .from('message_reactions')
+      .from('message_feedback')
       .delete()
       .match({ user_id: userId, message_id: messageId });
     if (error) {
@@ -533,12 +533,11 @@ export async function setMessageReaction(userId: string, chatId: string, message
     }
   } else {
     const { error } = await supabase
-      .from('message_reactions')
+      .from('message_feedback')
       .upsert({
         user_id: userId,
-        chat_id: chatId,
         message_id: messageId,
-        reaction: reaction,
+        feedback_type: reaction,
         updated_at: new Date().toISOString()
       }, { onConflict: 'message_id, user_id' });
     if (error) {

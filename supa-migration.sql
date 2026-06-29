@@ -485,7 +485,23 @@ CREATE TRIGGER trigger_update_zoom_pending_actions_updated_at
   FOR EACH ROW
   EXECUTE FUNCTION public.handle_updated_at();
 
--- 13. RELOAD SCHEMA CACHE
+-- 13. Message Versions
+CREATE TABLE IF NOT EXISTS public.message_versions (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  parent_message_id uuid NOT NULL REFERENCES public.messages(id) ON DELETE CASCADE,
+  response_content text NOT NULL,
+  version_number integer NOT NULL,
+  created_at timestamptz DEFAULT now() NOT NULL,
+  PRIMARY KEY (id)
+);
+ALTER TABLE public.message_versions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view own message_versions" ON public.message_versions;
+CREATE POLICY "Users can view own message_versions" ON public.message_versions FOR SELECT USING (EXISTS (SELECT 1 FROM public.messages m JOIN public.chats c ON m.chat_id = c.id WHERE m.id = parent_message_id AND c.user_id = auth.uid()));
+DROP POLICY IF EXISTS "Users can insert own message_versions" ON public.message_versions;
+CREATE POLICY "Users can insert own message_versions" ON public.message_versions FOR INSERT WITH CHECK (EXISTS (SELECT 1 FROM public.messages m JOIN public.chats c ON m.chat_id = c.id WHERE m.id = parent_message_id AND c.user_id = auth.uid()));
+
+-- 14. RELOAD SCHEMA CACHE
 -- Forces PostgREST to instantly reload definitions and resolves stale cache issues (PGRST205 / PGRST204)
 NOTIFY pgrst, 'reload schema';
 
