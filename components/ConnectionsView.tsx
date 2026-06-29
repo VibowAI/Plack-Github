@@ -29,11 +29,12 @@ export default function ConnectionsView({
   const [filter, setFilter] = useState<'all'|'connected'>('all');
   const [showZoomWorkspace, setShowZoomWorkspace] = useState(true);
 
-  if (zoomEmail && showZoomWorkspace) {
+  if (showZoomWorkspace) {
     return (
       <ZoomWorkspace
         theme={theme}
         zoomEmail={zoomEmail}
+        onConnect={onConnectZoom}
         onDisconnect={onDisconnectZoom}
         onBackToConnections={() => setShowZoomWorkspace(false)}
       />
@@ -288,10 +289,10 @@ export default function ConnectionsView({
                             onClick={() => setShowZoomWorkspace(true)}
                             className={cn(
                               "px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1 active:scale-95 cursor-pointer",
-                              theme === 'light' ? "bg-neutral-900 text-white hover:bg-neutral-800" : "bg-white text-black hover:bg-neutral-200"
+                              theme === 'light' ? "bg-neutral-950 text-white hover:bg-neutral-800" : "bg-white text-black hover:bg-neutral-200"
                             )}
                           >
-                            Open Workspace
+                            App Page
                             <ChevronRight size={13} />
                           </button>
                         )}
@@ -300,14 +301,18 @@ export default function ConnectionsView({
                       <button 
                         type="button"
                         onClick={() => {
-                          if (app.id === 'zoom') onConnectZoom();
+                          if (app.id === 'zoom') {
+                            setShowZoomWorkspace(true);
+                          } else {
+                            onConnectZoom();
+                          }
                         }}
                         className={cn(
                           "px-5 py-2.5 rounded-xl text-[13.5px] font-bold transition-all flex items-center gap-2 active:scale-95 shadow-sm group-hover:shadow-md cursor-pointer",
-                          theme === 'light' ? "bg-neutral-900 text-white hover:bg-neutral-800" : "bg-white text-black hover:bg-neutral-200"
+                          theme === 'light' ? "bg-neutral-950 text-white hover:bg-neutral-850" : "bg-white text-black hover:bg-neutral-200"
                         )}
                       >
-                        Connect {app.name}
+                        {app.id === 'zoom' ? "App Page" : `Connect ${app.name}`}
                         <ChevronRight size={15} className="group-hover:translate-x-0.5 transition-transform" />
                       </button>
                     )}
