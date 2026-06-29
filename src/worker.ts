@@ -1532,7 +1532,7 @@ app.post('/api/zoom/execute', async (c) => {
       // Convert structured report to a beautiful Markdown presentation for the frontend
       const rep = res.report;
       
-      let markdown = `# ${rep.executive_summary ? 'Smart Meeting Intelligence' : 'Meeting Analysis'}\n\n`;
+      let markdown = `# Meeting Analysis\n\n`;
       
       if (rep.executive_summary) {
         markdown += `## Executive Summary\n${rep.executive_summary}\n\n`;
@@ -1655,11 +1655,15 @@ app.post('/api/zoom/chat', async (c) => {
 
     const ai = getGeminiClient([c.env.MY_GEMINI_API_KEY, c.env.MY_GEMINI_API_KEY_2, c.env.GEMINI_API_KEY]);
 
-    // Construct a rich system prompt with the live meetings and current time/date
-    const systemInstruction = `You are Plack AI's Zoom Smart Assistant. You help the user understand, manage, search, and analyze their Zoom meetings, schedules, recordings, and summaries.
+    const now = new Date();
+    const isoNow = now.toISOString();
+    const datePart = isoNow.split('T')[0];
 
-Current Date and Time of user: 2026-06-29T03:11:43-07:00 (Year: 2026)
-Always resolve time references (e.g. "yesterday", "next week", "last month", "tomorrow") based on this current time: 2026-06-29.
+    // Construct a rich system prompt with the live meetings and current time/date
+    const systemInstruction = `You are Plack AI's Zoom Assistant. You help the user understand, manage, search, and analyze their Zoom meetings, schedules, recordings, and summaries.
+
+Current Date and Time of user: ${isoNow} (Year: ${now.getFullYear()})
+Always resolve time references (e.g. "yesterday", "next week", "last month", "tomorrow") based on this current date: ${datePart}.
 
 Here is the PERSISTENT data from the user's Zoom account retrieved from Supabase:
 === UPCOMING & PAST MEETINGS ===
@@ -1684,7 +1688,7 @@ ${recordings.length === 0 ? 'No cloud recordings found.' : JSON.stringify(record
   created_at: r.created_at
 })), null, 2)}
 
-=== GENERATED MEETING INTELLIGENCE REPORTS ===
+=== GENERATED MEETING ANALYSIS REPORTS ===
 ${reports.length === 0 ? 'No AI reports generated yet.' : JSON.stringify(reports.map(rep => ({
   meeting_id: rep.meeting_id,
   summary: rep.executive_summary,

@@ -5119,7 +5119,7 @@ export default function Home() {
                             <div className="py-2">
                               <AIActivityPanel 
                                 theme={theme}
-                                actionName={message.isDeepResearch ? "Deep Research Processing..." : isWebSearchEnabled ? "Searching the web..." : isZoomModeEnabled ? "Processing with Zoom..." : "Understanding request..."}
+                                actionName={message.isDeepResearch ? "Deep Research Processing..." : isWebSearchEnabled ? "Searching the web..." : isZoomModeEnabled ? "Accessing Zoom..." : "Understanding request..."}
                                 icon={message.isDeepResearch ? Cpu : isWebSearchEnabled ? Search : isZoomModeEnabled ? Video : BrainCircuit}
                                 colorClass={message.isDeepResearch ? "bg-purple-500/10 text-purple-500" : isWebSearchEnabled ? "bg-indigo-500/10 text-indigo-500" : isZoomModeEnabled ? "bg-blue-500/10 text-blue-500" : undefined}
                               />
@@ -6003,10 +6003,10 @@ export default function Home() {
                                         </div>
                                         <div className="flex flex-col text-left">
                                           <span className="text-[13px] font-bold leading-none font-sans">
-                                            Zoom Mode
+                                            Zoom Assistant
                                           </span>
                                           <span className={cn("text-[11px] leading-tight mt-1 opacity-65", theme === 'light' ? "text-neutral-600" : "text-neutral-400")}>
-                                            Native AI meeting assistant
+                                            Native meeting assistant
                                           </span>
                                         </div>
                                       </div>
@@ -6212,10 +6212,10 @@ export default function Home() {
                                         </div>
                                         <div className="flex flex-col text-left">
                                           <span className="text-[13px] font-bold leading-none font-sans">
-                                            Zoom Mode
+                                            Zoom Assistant
                                           </span>
                                           <span className={cn("text-[11px] leading-tight mt-1 opacity-65", theme === 'light' ? "text-neutral-600" : "text-neutral-400")}>
-                                            Native AI meeting assistant
+                                            Native meeting assistant
                                           </span>
                                         </div>
                                       </div>

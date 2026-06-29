@@ -51,12 +51,14 @@ export async function getOrCreateAIReport(
       return { success: false, error: 'Meeting not found. Synchronize meetings first.', logs };
     }
 
-    addLog(`[ZOOM REPORT] Creating new AI report for meeting "${meeting.topic}" using Gemini`);
+    addLog(`[ZOOM REPORT] Creating new meeting analysis for "${meeting.topic}" using Gemini`);
 
     // 3. Call Gemini to generate a structured JSON report
     const ai = getGeminiClient(customKeys);
-    const prompt = `You are Plack AI Meeting Intelligence, a premium, futuristic AI assistant.
-Analyze the following meeting details and generate a highly professional, detailed, and insightful meeting intelligence report. Since this is an AI-powered meeting system, project realistic details (like participants, decisions, duration split) based on the meeting topic and description to make the report feel fully formed, engaging, and premium.
+    const prompt = `You are a meeting analyst assistant.
+Analyze the following meeting details and generate a professional, factual, and data-driven meeting analysis report.
+
+CRITICAL: Use ONLY the provided metadata. Do NOT project or hallucinate participants, decisions, or topics that are not explicitly present in the data or clearly inferred from the description. If a field (like participants or specific decisions) is not available in the metadata, return an empty array or a "Not identified" string as appropriate.
 
 Meeting Details:
 - Topic: ${meeting.topic}
@@ -67,20 +69,20 @@ Meeting Details:
 
 You MUST return a JSON object with this exact schema:
 {
-  "executive_summary": "A 3-4 sentence polished, executive-level narrative summarizing the meeting, key outcomes, and overall sentiment.",
+  "executive_summary": "A factual summary of the meeting based strictly on the topic and description.",
   "key_decisions": [
-    { "decision": "The final choice or agreement made", "rationale": "Why this decision was made or what factors influenced it" }
+    { "decision": "Explicit decision from description", "rationale": "Context if available" }
   ],
   "action_items": [
-    { "task": "Grounded task description", "assignee": "Full name of the assignee", "due_date": "Date or timeframe (e.g., 'By Friday', 'End of Week')" }
+    { "task": "Specific task from agenda/description", "assignee": "Name if mentioned", "due_date": "Deadline if mentioned" }
   ],
-  "participants": ["Full Name 1", "Full Name 2"],
+  "participants": ["Participant Name 1", "Participant Name 2"],
   "topics": [
-    { "topic": "Name of the topic or presentation segment", "duration_spent": "Estimated duration (e.g. '15 mins')", "summary": "Brief outline of what was covered in this section" }
+    { "topic": "Name of segment", "duration_spent": "Duration", "summary": "Outline" }
   ],
-  "risks": ["Potential blocker, bottleneck, or risk identified"],
+  "risks": ["Specific risk identified in description"],
   "follow_ups": [
-    { "step": "Immediate next step or meeting scheduled", "owner": "Owner's name" }
+    { "step": "Next step", "owner": "Owner" }
   ]
 }
 
