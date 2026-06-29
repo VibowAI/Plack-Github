@@ -119,6 +119,14 @@ interface Message {
     interests?: string;
     projectTypes?: string;
   };
+  zoomAction?: {
+    type: 'create' | 'update' | 'cancel' | 'list';
+    params: any;
+    confirmed?: boolean;
+    executed?: boolean;
+    error?: string;
+    result?: any;
+  };
 }
 
 interface ErrorReport {
@@ -205,6 +213,127 @@ function extractDocumentBlock(fullText: string): ExtractedDocument {
     cleanText
   };
 }
+
+interface ExtractedZoomAction {
+  hasAction: boolean;
+  type?: 'create' | 'update' | 'cancel' | 'list';
+  params?: any;
+  cleanText: string;
+}
+
+function extractZoomAction(fullText: string): ExtractedZoomAction {
+  if (!fullText) return { hasAction: false, cleanText: '' };
+  
+  const zoomRegex = /\[ZOOM_(CONFIRM_REQUIRED|ACTION):(\w+):({.*?})\]/i;
+  const match = fullText.match(zoomRegex);
+  
+  if (!match) {
+    return { hasAction: false, cleanText: fullText };
+  }
+
+  const type = match[2] as any;
+  let params = {};
+  try {
+    params = JSON.parse(match[3]);
+  } catch (e) {
+    console.error("Failed to parse Zoom action JSON", e);
+  }
+
+  const cleanText = fullText.replace(/\[ZOOM_(CONFIRM_REQUIRED|ACTION):[\s\S]*?\]/gi, '').trim();
+
+  return {
+    hasAction: true,
+    type,
+    params,
+    cleanText
+  };
+}
+
+// Zoom Action Card Component
+const ZoomActionCard = ({ action, onConfirm, onCancel, theme }: { action: any, onConfirm: () => void, onCancel: () => void, theme: string }) => {
+  const isExecuting = action.confirmed && !action.executed;
+  const isDone = action.executed;
+  const isError = !!action.error;
+
+  return (
+    <div className={cn(
+      "p-4 rounded-2xl border max-w-[320px] w-full my-2 animate-in fade-in slide-in-from-bottom-2 duration-300",
+      theme === 'light' ? "bg-white border-neutral-200 shadow-sm" : "bg-neutral-900 border-neutral-800 shadow-xl"
+    )}>
+      <div className="flex items-center gap-3 mb-3">
+        <div className="w-8 h-8 rounded-lg bg-blue-500 flex items-center justify-center shrink-0">
+          <Video size={16} className="text-white" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <h4 className="text-[13px] font-bold tracking-tight truncate capitalize">
+            {action.type === 'create' ? 'Create Zoom Meeting' : 
+             action.type === 'update' ? 'Update Zoom Meeting' :
+             action.type === 'cancel' ? 'Cancel Zoom Meeting' : 'Zoom Action'}
+          </h4>
+          <p className="text-[11px] opacity-60 font-medium">Zoom Capability</p>
+        </div>
+      </div>
+
+      <div className="space-y-2 mb-4 bg-neutral-50 dark:bg-neutral-800/50 p-3 rounded-xl border border-neutral-100 dark:border-neutral-800/40">
+        {action.params?.topic && (
+          <div className="flex justify-between gap-2 text-[11.5px]">
+            <span className="opacity-40">Topic</span>
+            <span className="font-semibold text-right truncate max-w-[120px]">{action.params.topic}</span>
+          </div>
+        )}
+        {action.params?.startTime && (
+          <div className="flex justify-between gap-2 text-[11.5px]">
+            <span className="opacity-40">Time</span>
+            <span className="font-semibold text-right">
+              {new Date(action.params.startTime).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+            </span>
+          </div>
+        )}
+        {action.params?.duration && (
+          <div className="flex justify-between gap-2 text-[11.5px]">
+            <span className="opacity-40">Duration</span>
+            <span className="font-semibold text-right">{action.params.duration} min</span>
+          </div>
+        )}
+      </div>
+
+      {!isDone ? (
+        <div className="flex gap-2">
+          <button
+            onClick={onCancel}
+            disabled={isExecuting}
+            className={cn(
+              "flex-1 px-3 py-2 rounded-xl text-[12px] font-bold transition-all cursor-pointer",
+              theme === 'light' ? "bg-neutral-100 text-neutral-600 hover:bg-neutral-200" : "bg-neutral-800 text-neutral-400 hover:bg-neutral-700"
+            )}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={isExecuting}
+            className={cn(
+              "flex-1 px-3 py-2 rounded-xl text-[12px] font-bold text-white transition-all flex items-center justify-center gap-2 cursor-pointer",
+              "bg-blue-600 hover:bg-blue-500 shadow-md shadow-blue-500/10 active:scale-95"
+            )}
+          >
+            {isExecuting ? <Loader2 size={12} className="animate-spin" /> : 'Confirm'}
+          </button>
+        </div>
+      ) : isError ? (
+        <div className="p-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-500 text-[11px] font-medium flex items-center gap-2">
+          <AlertCircle size={14} />
+          <span className="truncate">{action.error}</span>
+        </div>
+      ) : (
+        <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 text-[11px] font-bold flex items-center justify-center gap-2">
+          <CheckCircle2 size={14} />
+          {action.type === 'create' ? 'Meeting Created' : 'Action Completed'}
+        </div>
+      )}
+    </div>
+  );
+};
 
 function generateSlug(title: string, uuid: string): string {
   const cleanTitle = title
@@ -1775,6 +1904,35 @@ export default function Home() {
   const handleCopyMessage = (content: string) => {
     navigator.clipboard.writeText(content);
     showToast("Message copied to clipboard");
+  };
+
+  const handleExecuteZoomAction = async (messageId: string, actionType: string, params: any) => {
+    setMessages(prev => prev.map(m => 
+      m.id === messageId ? { ...m, zoomAction: { type: actionType as any, params, confirmed: true, executed: false } } : m
+    ));
+
+    try {
+      const res = await fetch('/api/zoom/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: actionType, ...params })
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setMessages(prev => prev.map(m => 
+          m.id === messageId ? { ...m, zoomAction: { ...m.zoomAction!, executed: true, result: data.result } } : m
+        ));
+        showToast("Zoom action completed successfully");
+      } else {
+        throw new Error(data.error || 'Failed to execute Zoom action');
+      }
+    } catch (error: any) {
+      setMessages(prev => prev.map(m => 
+        m.id === messageId ? { ...m, zoomAction: { ...m.zoomAction!, executed: true, error: error.message } } : m
+      ));
+      showToast(error.message, "error");
+    }
   };
 
   const handleFeedback = async (msgId: string, type: 'like' | 'dislike') => {
@@ -4738,13 +4896,26 @@ export default function Home() {
                             </div>
                           ) : (
                             (() => {
-                              const parsedDoc = extractDocumentBlock(contentToRender);
+                              const zoom = extractZoomAction(contentToRender);
+                              const parsedDoc = extractDocumentBlock(zoom.cleanText);
                               
                               return (
                                 <div className="flex flex-col gap-4">
                                   {parsedDoc.cleanText && (
                                     <MarkdownRenderer content={parsedDoc.cleanText} theme={theme} />
                                   )}
+                                  
+                                  {zoom.hasAction && (
+                                    <ZoomActionCard 
+                                      action={message.zoomAction || zoom}
+                                      theme={theme}
+                                      onConfirm={() => handleExecuteZoomAction(message.id, zoom.type!, zoom.params)}
+                                      onCancel={() => {
+                                        setMessages(prev => prev.map(m => m.id === message.id ? { ...m, zoomAction: undefined } : m));
+                                      }}
+                                    />
+                                  )}
+
                                   {parsedDoc.hasDocument && (
                                     <InlineDocumentBlock 
                                       id={parsedDoc.id}

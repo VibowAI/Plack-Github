@@ -1253,7 +1253,7 @@ app.post('/api/zoom/chat', async (c) => {
     // Construct a rich system prompt with the live meetings and current time/date
     const systemInstruction = `You are Plack AI's Zoom Smart Assistant. You help the user understand, manage, search, and analyze their Zoom meetings, schedules, recordings, and summaries.
 
-Current Date and Time of user: 2026-06-29T02:31:02-07:00 (Year: 2026)
+Current Date and Time of user: 2026-06-29T03:11:43-07:00 (Year: 2026)
 Always resolve time references (e.g. "yesterday", "next week", "last month", "tomorrow") based on this current time: 2026-06-29.
 
 Here is the LIVE data from the user's Zoom account:
@@ -1266,14 +1266,16 @@ ${recordings.length === 0 ? 'No cloud recordings found.' : JSON.stringify(record
 === MANDATES ===
 1. Only reference meetings and recordings in the list above, or clearly state that the account has no matching items.
 2. If the user asks you to schedule, reschedule, update, or cancel a meeting:
-   You MUST request explicit confirmation first. Output a special confirmation tag EXACTLY in this format on its own line:
+   You MUST request explicit confirmation first using natural language.
+   Example: "I can create a Zoom meeting titled 'Sync' for tomorrow at 2 PM. Would you like me to proceed?"
+   At the VERY END of your response, output a special confirmation tag EXACTLY in this format on its own line:
    [ZOOM_CONFIRM_REQUIRED:actionType:jsonParams]
    Where actionType is 'create', 'update', or 'cancel'.
    Where jsonParams is a stringified JSON object matching these schemas:
-     - For create: {"topic": "Meeting Topic", "startTime": "2026-06-30T15:00:00Z", "duration": 40} (Compute startTime correctly relative to 2026-06-29)
+     - For create: {"topic": "Meeting Topic", "startTime": "2026-06-30T15:00:00Z", "duration": 40}
      - For update: {"meetingId": "123456789", "topic": "Updated Topic", "startTime": "2026-06-30T16:00:00Z"}
      - For cancel: {"meetingId": "123456789", "topic": "Meeting Topic"}
-   Never claim that you have scheduled, updated, or deleted the meeting. Say: "I am ready to schedule your Zoom meeting. Please confirm the details in the card below:" followed by the exact tag on its own line.
+   Never claim that you have scheduled, updated, or deleted the meeting until the user explicitly confirms via the UI buttons that will appear.
 3. Be professional, concise, and helpful. Use clean Markdown styling for responses. Do not inventory fake accounts or fake meetings.
 `;
 
@@ -1298,7 +1300,24 @@ ${recordings.length === 0 ? 'No cloud recordings found.' : JSON.stringify(record
       }
     });
 
-    return c.json({ success: true, text: response.text });
+    let text = response.text || "";
+    let zoomAction: any = null;
+
+    // Detect and extract the zoom action tag
+    const zoomMatch = text.match(/\[ZOOM_CONFIRM_REQUIRED:(\w+):({.*?})\]/);
+    if (zoomMatch) {
+      const type = zoomMatch[1];
+      try {
+        const params = JSON.parse(zoomMatch[2]);
+        zoomAction = { type, params };
+        // Remove the tag from the text so it's never shown to user
+        text = text.replace(/\[ZOOM_CONFIRM_REQUIRED:(\w+):({.*?})\]/, "").trim();
+      } catch (e) {
+        console.error("Failed to parse Zoom action JSON", e);
+      }
+    }
+
+    return c.json({ success: true, text, zoomAction });
   } catch (err: any) {
     console.error('[ZOOM CHAT ERROR]', err);
     return c.json({ error: err.message || 'Zoom chat assistant failed' }, 500);
@@ -1962,17 +1981,18 @@ Respond with a JSON object: { "requiresSearch": boolean }`;
     if (isZoomConnected) {
       baseInstruction += `Zoom is currently CONNECTED for this user (Connected Account Email: ${zoomEmail}).\n` +
         `You can assist the user in managing their Zoom meetings (create, list, update, cancel).\n` +
-        `1. EXPLICIT CONFIRMATION MANDATE: Before the AI performs any Zoom action requiring account modifications (create, update, cancel), you MUST clearly explain what will happen and request confirmation by outputting a special confirmation tag EXACTLY in this format on its own line:\n` +
+        `1. EXPLICIT CONFIRMATION MANDATE: Before any Zoom action requiring account modifications (create, update, cancel), you MUST clearly explain what will happen using natural language and request confirmation.\n` +
+        `   Example: "I can create a Zoom meeting titled 'Design Review' for tomorrow at 9 AM. Would you like me to proceed?"\n` +
+        `   At the VERY END of your response, output a special confirmation tag EXACTLY in this format on its own line:\n` +
         `   [ZOOM_CONFIRM_REQUIRED:actionType:jsonParams]\n` +
         `   Where actionType is 'create', 'update', or 'cancel'.\n` +
         `   Where jsonParams is a stringified JSON object matching these schemas:\n` +
-        `     - For create: {"topic": "Meeting Topic", "startTime": "2026-06-28T09:00:00Z", "duration": 40, "timezone": "UTC"}\n` +
-        `     - For update: {"meetingId": "123456789", "topic": "Updated Topic", "startTime": "2026-06-28T10:00:00Z", "duration": 40}\n` +
+        `     - For create: {"topic": "Meeting Topic", "startTime": "2026-06-30T09:00:00Z", "duration": 40, "timezone": "UTC"}\n` +
+        `     - For update: {"meetingId": "123456789", "topic": "Updated Topic", "startTime": "2026-06-30T10:00:00Z", "duration": 40}\n` +
         `     - For cancel: {"meetingId": "123456789", "topic": "Meeting Topic"}\n` +
-        `   Example: If the user says "Create a Zoom meeting tomorrow at 9 AM called Design Review", write: "I am ready to schedule your Zoom meeting. Please confirm the details below:" and write the tag on its own line:\n` +
-        `   [ZOOM_CONFIRM_REQUIRED:create:{"topic":"Design Review","startTime":"2026-06-28T09:00:00Z","duration":40}]\n` +
-        `2. Listing meetings: If the user wants to list meetings, you do not need confirmation. Output a tag on its own line: [ZOOM_ACTION:list:{}] so the frontend can retrieve and render the active upcoming meetings.\n` +
-        `3. Never perform actions or state that you deleted or scheduled meetings without outputting the confirmation tag first. The system will handle the action when the user clicks 'Confirm' in the interactive card.`;
+        `2. Listing meetings: If the user wants to list meetings, explain what you found and then output a tag on its own line: [ZOOM_ACTION:list:{}] so the frontend can retrieve and render the active upcoming meetings.\n` +
+        `3. DO NOT output the tag in the middle of a sentence. It MUST be on its own line at the end of your response.\n` +
+        `4. The user should NEVER see the raw [ZOOM_...] tag. Speak naturally. The frontend will intercept the tag and show buttons.`;
     } else {
       baseInstruction += `Zoom is NOT connected. If the user asks to schedule, view, or manage Zoom meetings, politely instruct them to connect their Zoom account first on the Connections page (/connections) before you can perform any Zoom actions.`;
     }
