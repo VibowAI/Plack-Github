@@ -447,7 +447,45 @@ CREATE INDEX IF NOT EXISTS idx_zoom_ai_reports_user_id ON public.zoom_ai_reports
 CREATE INDEX IF NOT EXISTS idx_zoom_ai_reports_meeting_id ON public.zoom_ai_reports(meeting_id);
 
 
--- 11. RELOAD SCHEMA CACHE
+-- 12. Zoom Pending Actions (Confirmations)
+CREATE TABLE IF NOT EXISTS public.zoom_pending_actions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  chat_id uuid REFERENCES public.chats(id) ON DELETE CASCADE,
+  message_id uuid REFERENCES public.messages(id) ON DELETE CASCADE,
+  action_type text NOT NULL, -- e.g., 'create_meeting'
+  payload jsonb DEFAULT '{}'::jsonb,
+  status text NOT NULL DEFAULT 'pending', -- pending, accepted, rejected, failed, expired
+  created_at timestamptz DEFAULT now() NOT NULL,
+  updated_at timestamptz DEFAULT now() NOT NULL,
+  completed_at timestamptz
+);
+
+ALTER TABLE public.zoom_pending_actions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view own zoom_pending_actions" ON public.zoom_pending_actions;
+CREATE POLICY "Users can view own zoom_pending_actions" ON public.zoom_pending_actions FOR SELECT USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can insert own zoom_pending_actions" ON public.zoom_pending_actions;
+CREATE POLICY "Users can insert own zoom_pending_actions" ON public.zoom_pending_actions FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can update own zoom_pending_actions" ON public.zoom_pending_actions;
+CREATE POLICY "Users can update own zoom_pending_actions" ON public.zoom_pending_actions FOR UPDATE USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can delete own zoom_pending_actions" ON public.zoom_pending_actions;
+CREATE POLICY "Users can delete own zoom_pending_actions" ON public.zoom_pending_actions FOR DELETE USING (auth.uid() = user_id);
+
+CREATE INDEX IF NOT EXISTS idx_zoom_pending_actions_user_id ON public.zoom_pending_actions(user_id);
+CREATE INDEX IF NOT EXISTS idx_zoom_pending_actions_chat_id ON public.zoom_pending_actions(chat_id);
+CREATE INDEX IF NOT EXISTS idx_zoom_pending_actions_message_id ON public.zoom_pending_actions(message_id);
+
+DROP TRIGGER IF EXISTS trigger_update_zoom_pending_actions_updated_at ON public.zoom_pending_actions;
+CREATE TRIGGER trigger_update_zoom_pending_actions_updated_at
+  BEFORE UPDATE ON public.zoom_pending_actions
+  FOR EACH ROW
+  EXECUTE FUNCTION public.handle_updated_at();
+
+-- 13. RELOAD SCHEMA CACHE
 -- Forces PostgREST to instantly reload definitions and resolves stale cache issues (PGRST205 / PGRST204)
 NOTIFY pgrst, 'reload schema';
 

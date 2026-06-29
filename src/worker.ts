@@ -1138,7 +1138,7 @@ app.post('/api/zoom/execute', async (c) => {
     }
 
     const body = await c.req.json().catch(() => ({}));
-    const { action, meetingId, topic, startTime, duration, timezone } = body;
+    const { action, meetingId, topic, startTime, duration, timezone, pendingActionId } = body;
 
     if (!action) {
       return c.json({ error: 'action is required' }, 400);
@@ -1146,6 +1146,21 @@ app.post('/api/zoom/execute', async (c) => {
 
     console.log(`[DEVELOPER LOG] Zoom API execution requested by ${user.email}. Action: ${action}`);
     const supabase = createAdminClient();
+
+    // 1. Duplicate Protection / Check existing pending action
+    if (pendingActionId) {
+      const { data: existingAction } = await supabase
+        .from('zoom_pending_actions')
+        .select('*')
+        .eq('id', pendingActionId)
+        .eq('user_id', user.id)
+        .maybeSingle();
+      
+      if (existingAction?.status === 'accepted') {
+        console.log(`[DUPLICATE CREATE BLOCKED] Pending action ${pendingActionId} is already accepted.`);
+        return c.json({ success: true, message: 'Action already completed.', wasDuplicate: true });
+      }
+    }
 
     if (action === 'sync') {
       const result = await syncZoomData(user.id, c.env);
@@ -1270,63 +1285,103 @@ app.post('/api/zoom/execute', async (c) => {
       if (!topic || !startTime) {
         return c.json({ error: 'topic and startTime are required to create a meeting.' }, 400);
       }
-      // Create on Zoom
-      const meeting = await createZoomMeeting(user.id, {
-        topic,
-        start_time: startTime,
-        duration,
-        timezone
-      }, c.env);
+      
+      try {
+        console.log(`[ZOOM API CREATE] Creating meeting for user ${user.id}`);
+        // Create on Zoom
+        const meeting = await createZoomMeeting(user.id, {
+          topic,
+          start_time: startTime,
+          duration,
+          timezone
+        }, c.env);
 
-      console.log(`[ZOOM MEETING CREATED] Zoom meeting created successfully on Zoom. ID: ${meeting.id}`);
+        console.log(`[ZOOM MEETING CREATED] Zoom meeting created successfully. ID: ${meeting.id}`);
 
-      // Save to Supabase
-      const sTime = meeting.start_time ? new Date(meeting.start_time).toISOString() : new Date(startTime).toISOString();
-      let eTime = null;
-      if (sTime && (meeting.duration || duration)) {
-        eTime = new Date(new Date(sTime).getTime() + (meeting.duration || duration || 40) * 60 * 1000).toISOString();
+        // Update pending action to accepted
+        if (pendingActionId) {
+          await supabase
+            .from('zoom_pending_actions')
+            .update({ 
+              status: 'accepted', 
+              completed_at: new Date().toISOString(),
+              payload: { ...body, result: meeting } 
+            })
+            .eq('id', pendingActionId);
+          console.log(`[CONFIRMATION ACCEPTED] Pending action ${pendingActionId} marked as accepted`);
+        }
+
+        // Save to Supabase
+        const sTime = meeting.start_time ? new Date(meeting.start_time).toISOString() : new Date(startTime).toISOString();
+        let eTime = null;
+        if (sTime && (meeting.duration || duration)) {
+          eTime = new Date(new Date(sTime).getTime() + (meeting.duration || duration || 40) * 60 * 1000).toISOString();
+        }
+
+        const meetingData = {
+          user_id: user.id,
+          zoom_meeting_id: String(meeting.id),
+          topic: meeting.topic || topic,
+          description: meeting.agenda || '',
+          start_time: sTime,
+          end_time: eTime,
+          timezone: meeting.timezone || timezone || 'UTC',
+          duration: meeting.duration || duration || 40,
+          join_url: meeting.join_url || '',
+          start_url: meeting.start_url || '',
+          meeting_password: meeting.password || '',
+          host_email: meeting.host_email || '',
+          meeting_status: meeting.status || 'scheduled',
+          last_synced_at: new Date().toISOString()
+        };
+
+        const { error: saveErr } = await supabase
+          .from('zoom_meetings')
+          .upsert(meetingData, { onConflict: 'user_id,zoom_meeting_id' });
+
+        if (saveErr) {
+          console.error('[SUPABASE SAVE ERROR] Failed to save newly created meeting:', saveErr);
+        } else {
+          console.log(`[SUPABASE SAVE] Saved newly created Zoom meeting: ${topic} (ID: ${meeting.id})`);
+        }
+
+        return c.json({ success: true, meeting });
+      } catch (err: any) {
+        console.error('[ZOOM CREATE ERROR]', err);
+        if (pendingActionId) {
+          await supabase
+            .from('zoom_pending_actions')
+            .update({ status: 'failed', payload: { ...body, error: err.message } })
+            .eq('id', pendingActionId);
+        }
+        return c.json({ error: err.message || 'Failed to create meeting' }, 500);
       }
-
-      const meetingData = {
-        user_id: user.id,
-        zoom_meeting_id: String(meeting.id),
-        topic: meeting.topic || topic,
-        description: meeting.agenda || '',
-        start_time: sTime,
-        end_time: eTime,
-        timezone: meeting.timezone || timezone || 'UTC',
-        duration: meeting.duration || duration || 40,
-        join_url: meeting.join_url || '',
-        start_url: meeting.start_url || '',
-        meeting_password: meeting.password || '',
-        host_email: meeting.host_email || '',
-        meeting_status: meeting.status || 'scheduled',
-        last_synced_at: new Date().toISOString()
-      };
-
-      const { error: saveErr } = await supabase
-        .from('zoom_meetings')
-        .upsert(meetingData, { onConflict: 'user_id,zoom_meeting_id' });
-
-      if (saveErr) {
-        console.error('[SUPABASE SAVE ERROR] Failed to save newly created meeting:', saveErr);
-      } else {
-        console.log(`[SUPABASE SAVE] Saved newly created Zoom meeting: ${topic} (ID: ${meeting.id})`);
-      }
-
-      return c.json({ success: true, meeting });
     }
 
     if (action === 'update') {
       if (!meetingId) return c.json({ error: 'meetingId is required' }, 400);
       
-      // Update on Zoom
-      const result = await updateZoomMeeting(user.id, meetingId, {
-        topic,
-        start_time: startTime,
-        duration,
-        timezone
-      }, c.env);
+      try {
+        // Update on Zoom
+        const result = await updateZoomMeeting(user.id, meetingId, {
+          topic,
+          start_time: startTime,
+          duration,
+          timezone
+        }, c.env);
+
+        // Update pending action to accepted
+        if (pendingActionId) {
+          await supabase
+            .from('zoom_pending_actions')
+            .update({ 
+              status: 'accepted', 
+              completed_at: new Date().toISOString(),
+              payload: { ...body, result } 
+            })
+            .eq('id', pendingActionId);
+          console.log(`[CONFIRMATION ACCEPTED] Pending action ${pendingActionId} marked as accepted (update)`);
+        }
 
       console.log(`[ZOOM MEETING UPDATED] Zoom meeting ${meetingId} updated successfully on Zoom.`);
 
@@ -1361,36 +1416,70 @@ app.post('/api/zoom/execute', async (c) => {
         .eq('user_id', user.id)
         .eq('zoom_meeting_id', meetingId);
 
-      if (updateErr) {
-        console.error('[SUPABASE UPDATE ERROR] Failed to update meeting in Supabase:', updateErr);
-      } else {
-        console.log(`[SUPABASE UPDATE] Updated Zoom meeting ${meetingId} in Supabase.`);
-      }
+        if (updateErr) {
+          console.error('[SUPABASE UPDATE ERROR] Failed to update meeting in Supabase:', updateErr);
+        } else {
+          console.log(`[SUPABASE UPDATE] Updated Zoom meeting ${meetingId} in Supabase.`);
+        }
 
-      return c.json({ success: true, result });
+        return c.json({ success: true, result });
+      } catch (err: any) {
+        console.error('[ZOOM UPDATE ERROR]', err);
+        if (pendingActionId) {
+          await supabase
+            .from('zoom_pending_actions')
+            .update({ status: 'failed', payload: { ...body, error: err.message } })
+            .eq('id', pendingActionId);
+        }
+        return c.json({ error: err.message || 'Failed to update meeting' }, 500);
+      }
     }
 
     if (action === 'cancel') {
       if (!meetingId) return c.json({ error: 'meetingId is required' }, 400);
 
-      // Cancel on Zoom
-      await cancelZoomMeeting(user.id, meetingId, c.env);
-      console.log(`[ZOOM MEETING DELETED] Zoom meeting ${meetingId} cancelled on Zoom.`);
+      try {
+        // Cancel on Zoom
+        await cancelZoomMeeting(user.id, meetingId, c.env);
+        console.log(`[ZOOM MEETING DELETED] Zoom meeting ${meetingId} cancelled on Zoom.`);
 
-      // Delete from Supabase
-      const { error: deleteErr } = await supabase
-        .from('zoom_meetings')
-        .delete()
-        .eq('user_id', user.id)
-        .eq('zoom_meeting_id', meetingId);
+        // Update pending action to accepted
+        if (pendingActionId) {
+          await supabase
+            .from('zoom_pending_actions')
+            .update({ 
+              status: 'accepted', 
+              completed_at: new Date().toISOString(),
+              payload: { ...body, success: true } 
+            })
+            .eq('id', pendingActionId);
+          console.log(`[CONFIRMATION ACCEPTED] Pending action ${pendingActionId} marked as accepted (cancel)`);
+        }
 
-      if (deleteErr) {
-        console.error('[SUPABASE DELETE ERROR] Failed to delete meeting from Supabase:', deleteErr);
-      } else {
-        console.log(`[SUPABASE DELETE] Deleted Zoom meeting ${meetingId} from Supabase.`);
+        // Delete from Supabase
+        const { error: deleteErr } = await supabase
+          .from('zoom_meetings')
+          .delete()
+          .eq('user_id', user.id)
+          .eq('zoom_meeting_id', meetingId);
+
+        if (deleteErr) {
+          console.error('[SUPABASE DELETE ERROR] Failed to delete meeting from Supabase:', deleteErr);
+        } else {
+          console.log(`[SUPABASE DELETE] Deleted Zoom meeting ${meetingId} from Supabase.`);
+        }
+
+        return c.json({ success: true });
+      } catch (err: any) {
+        console.error('[ZOOM CANCEL ERROR]', err);
+        if (pendingActionId) {
+          await supabase
+            .from('zoom_pending_actions')
+            .update({ status: 'failed', payload: { ...body, error: err.message } })
+            .eq('id', pendingActionId);
+        }
+        return c.json({ error: err.message || 'Failed to cancel meeting' }, 500);
       }
-
-      return c.json({ success: true });
     }
 
     if (action === 'recordings') {
@@ -1645,6 +1734,92 @@ ${reports.length === 0 ? 'No AI reports generated yet.' : JSON.stringify(reports
   } catch (err: any) {
     console.error('[ZOOM CHAT ERROR]', err);
     return c.json({ error: err.message || 'Zoom chat assistant failed' }, 500);
+  }
+});
+
+// 5.6 POST /api/zoom/pending-actions (Create a new pending action)
+app.post('/api/zoom/pending-actions', async (c) => {
+  try {
+    const user = await getAuthUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+
+    const { chatId, messageId, actionType, payload } = await c.req.json();
+    if (!actionType) return c.json({ error: 'actionType is required' }, 400);
+
+    const supabase = createAdminClient();
+    const { data, error } = await supabase
+      .from('zoom_pending_actions')
+      .insert({
+        user_id: user.id,
+        chat_id: chatId,
+        message_id: messageId,
+        action_type: actionType,
+        payload: payload || {},
+        status: 'pending'
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+    console.log(`[ZOOM CONFIRM CREATED] New pending action created for user ${user.id}`);
+    return c.json({ success: true, action: data });
+  } catch (err: any) {
+    console.error('[ZOOM ERROR] Failed to create pending action:', err);
+    return c.json({ error: err.message }, 500);
+  }
+});
+
+// 5.7 GET /api/zoom/pending-actions (List pending actions for a chat)
+app.get('/api/zoom/pending-actions', async (c) => {
+  try {
+    const user = await getAuthUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+
+    const chatId = c.req.query('chatId');
+    const supabase = createAdminClient();
+    
+    let query = supabase.from('zoom_pending_actions').select('*').eq('user_id', user.id);
+    if (chatId) query = query.eq('chat_id', chatId);
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    return c.json({ success: true, actions: data || [] });
+  } catch (err: any) {
+    console.error('[ZOOM ERROR] Failed to fetch pending actions:', err);
+    return c.json({ error: err.message }, 500);
+  }
+});
+
+// 5.8 PATCH /api/zoom/pending-actions/:id (Update status)
+app.patch('/api/zoom/pending-actions/:id', async (c) => {
+  try {
+    const user = await getAuthUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+
+    const id = c.req.param('id');
+    const { status } = await c.req.json();
+    
+    const supabase = createAdminClient();
+    const updateData: any = { status, updated_at: new Date().toISOString() };
+    if (status === 'accepted' || status === 'rejected' || status === 'failed') {
+      updateData.completed_at = new Date().toISOString();
+    }
+
+    const { data, error } = await supabase
+      .from('zoom_pending_actions')
+      .update(updateData)
+      .eq('id', id)
+      .eq('user_id', user.id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    console.log(`[CONFIRMATION ${status.toUpperCase()}] Pending action ${id} updated to ${status}`);
+    return c.json({ success: true, action: data });
+  } catch (err: any) {
+    console.error('[ZOOM ERROR] Failed to update pending action:', err);
+    return c.json({ error: err.message }, 500);
   }
 });
 

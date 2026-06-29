@@ -250,10 +250,21 @@ function extractZoomAction(fullText: string): ExtractedZoomAction {
 }
 
 // Zoom Action Card Component
-const ZoomActionCard = ({ action, onConfirm, onCancel, theme }: { action: any, onConfirm: () => void, onCancel: () => void, theme: string }) => {
+const ZoomActionCard = ({ action, onConfirm, onCancel, onRetry, theme }: { 
+  action: any, 
+  onConfirm: () => void, 
+  onCancel: () => void, 
+  onRetry?: () => void,
+  theme: string 
+}) => {
+  const status = action.status || 'pending';
   const isExecuting = action.confirmed && !action.executed;
-  const isDone = action.executed;
-  const isError = !!action.error;
+  const isDone = action.executed || status === 'accepted' || status === 'failed';
+  const isError = status === 'failed' || !!action.error;
+  const isAccepted = status === 'accepted';
+  const isRejected = status === 'rejected';
+
+  if (isRejected) return null;
 
   return (
     <div className={cn(
@@ -261,8 +272,13 @@ const ZoomActionCard = ({ action, onConfirm, onCancel, theme }: { action: any, o
       theme === 'light' ? "bg-white border-neutral-200 shadow-sm" : "bg-neutral-900 border-neutral-800 shadow-xl"
     )}>
       <div className="flex items-center gap-3 mb-3">
-        <div className="w-8 h-8 rounded-lg bg-blue-500 flex items-center justify-center shrink-0">
-          <Video size={16} className="text-white" />
+        <div className={cn(
+          "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
+          isAccepted ? "bg-emerald-500" : isError ? "bg-red-500" : "bg-blue-500"
+        )}>
+          {isAccepted ? <CheckCircle2 size={16} className="text-white" /> : 
+           isError ? <AlertCircle size={16} className="text-white" /> : 
+           <Video size={16} className="text-white" />}
         </div>
         <div className="flex-1 min-w-0">
           <h4 className="text-[13px] font-bold tracking-tight truncate capitalize">
@@ -297,7 +313,7 @@ const ZoomActionCard = ({ action, onConfirm, onCancel, theme }: { action: any, o
         )}
       </div>
 
-      {!isDone ? (
+      {!isDone && status === 'pending' ? (
         <div className="flex gap-2">
           <button
             onClick={onCancel}
@@ -321,16 +337,72 @@ const ZoomActionCard = ({ action, onConfirm, onCancel, theme }: { action: any, o
           </button>
         </div>
       ) : isError ? (
-        <div className="p-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-500 text-[11px] font-medium flex items-center gap-2">
-          <AlertCircle size={14} />
-          <span className="truncate">{action.error}</span>
+        <div className="flex flex-col gap-2">
+          <div className="p-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-500 text-[11px] font-medium flex items-center gap-2">
+            <AlertCircle size={14} />
+            <span className="truncate">{action.error || 'Execution failed'}</span>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={onCancel}
+              className={cn(
+                "flex-1 px-3 py-2 rounded-xl text-[12px] font-bold transition-all cursor-pointer",
+                theme === 'light' ? "bg-neutral-100 text-neutral-600 hover:bg-neutral-200" : "bg-neutral-800 text-neutral-400 hover:bg-neutral-700"
+              )}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={onRetry || onConfirm}
+              className="flex-1 px-3 py-2 rounded-xl text-[12px] font-bold text-white bg-blue-600 hover:bg-blue-500 cursor-pointer"
+            >
+              Retry
+            </button>
+          </div>
         </div>
-      ) : (
-        <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 text-[11px] font-bold flex items-center justify-center gap-2">
-          <CheckCircle2 size={14} />
-          {action.type === 'create' ? 'Meeting Created' : 'Action Completed'}
+      ) : isAccepted ? (
+        <div className="flex flex-col gap-2">
+          <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 text-[11px] font-bold flex items-center justify-center gap-2">
+            <CheckCircle2 size={14} />
+            {action.type === 'create' ? 'Meeting Created' : 'Action Completed'}
+          </div>
+          {action.result?.join_url && (
+            <div className="flex flex-col gap-2">
+              <a 
+                href={action.result.join_url} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="w-full py-2.5 rounded-xl bg-blue-600 text-white text-[12.5px] font-bold text-center hover:bg-blue-500 transition-all shadow-md shadow-blue-500/20 active:scale-[0.98]"
+              >
+                Join Meeting
+              </a>
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => {
+                    navigator.clipboard.writeText(action.result.join_url);
+                    showToast("Invite link copied");
+                  }}
+                  className={cn(
+                    "flex-1 py-2 rounded-lg text-[11px] font-semibold transition-all",
+                    theme === 'light' ? "bg-neutral-100 text-neutral-600 hover:bg-neutral-200" : "bg-neutral-800 text-neutral-400 hover:bg-neutral-700"
+                  )}
+                >
+                  Copy Invite
+                </button>
+                <button 
+                  onClick={() => {/* Analyze logic */}}
+                  className={cn(
+                    "flex-1 py-2 rounded-lg text-[11px] font-semibold transition-all",
+                    theme === 'light' ? "bg-neutral-100 text-neutral-600 hover:bg-neutral-200" : "bg-neutral-800 text-neutral-400 hover:bg-neutral-700"
+                  )}
+                >
+                  Analyze
+                </button>
+              </div>
+            </div>
+          )}
         </div>
-      )}
+      ) : null}
     </div>
   );
 };
@@ -534,6 +606,106 @@ export default function Home() {
   // Zoom Integration States & Handlers
   const [zoomEmail, setZoomEmail] = useState<string | null>(null);
   const [isZoomLoading, setIsZoomLoading] = useState<boolean>(false);
+  const [zoomPendingActions, setZoomPendingActions] = useState<any[]>([]);
+
+  const fetchZoomPendingActions = useCallback(async (chatId: string) => {
+    if (!session?.access_token) return;
+    try {
+      const res = await fetch(`/api/zoom/pending-actions?chatId=${chatId}`, {
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`
+        }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setZoomPendingActions(data.actions || []);
+      }
+    } catch (err) {
+      console.error('[ZOOM] Failed to fetch pending actions:', err);
+    }
+  }, [session?.access_token]);
+
+  const createPendingAction = useCallback(async (messageId: string, zoom: any) => {
+    if (!activeChatId || !session?.access_token) return;
+    try {
+      const res = await fetch('/api/zoom/pending-actions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({
+          chatId: activeChatId,
+          messageId,
+          actionType: zoom.type,
+          payload: zoom.params
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setZoomPendingActions(prev => {
+          // Avoid duplicates
+          if (prev.some(a => a.id === data.action.id)) return prev;
+          return [...prev, data.action];
+        });
+      }
+    } catch (err) {
+      console.error('[ZOOM] Failed to create pending action:', err);
+    }
+  }, [activeChatId, session?.access_token]);
+
+  // Sync zoomPendingActions to messages state
+  useEffect(() => {
+    if (!messages.length || !zoomPendingActions.length) return;
+    
+    setMessages(prev => {
+      let changed = false;
+      const next = prev.map(msg => {
+        const zoom = extractZoomAction(msg.content);
+        if (zoom.hasAction) {
+          const pending = zoomPendingActions.find(a => a.message_id === msg.id);
+          if (pending) {
+            // Update message with latest DB status
+            const existingAction = msg.zoomAction;
+            if (!existingAction || existingAction.status !== pending.status || existingAction.id !== pending.id) {
+              changed = true;
+              return {
+                ...msg,
+                zoomAction: {
+                  ...zoom,
+                  id: pending.id,
+                  status: pending.status,
+                  confirmed: pending.status === 'accepted',
+                  executed: pending.status === 'accepted' || pending.status === 'failed',
+                  error: pending.status === 'failed' ? (pending.payload?.error || 'Execution failed') : undefined,
+                  result: pending.status === 'accepted' ? pending.payload?.result : undefined
+                }
+              };
+            }
+          }
+        }
+        return msg;
+      });
+      return changed ? next : prev;
+    });
+  }, [zoomPendingActions, messages.length]);
+
+  // Detect new confirmations that need to be persisted
+  useEffect(() => {
+    if (!activeChatId || isStreaming) return;
+    
+    messages.forEach(msg => {
+      if (msg.role === 'model' && !msg.isStreaming) {
+        const zoom = extractZoomAction(msg.content);
+        if (zoom.hasAction) {
+          const exists = zoomPendingActions.some(a => a.message_id === msg.id);
+          if (!exists) {
+             createPendingAction(msg.id, zoom);
+          }
+        }
+      }
+    });
+  }, [messages, activeChatId, isStreaming, zoomPendingActions, createPendingAction]);
 
   const fetchConnectionStatuses = async () => {
     if (!session?.access_token) return;
@@ -1463,6 +1635,9 @@ export default function Home() {
 
       const msgs = await getMessages(id);
       
+      // Load Zoom pending actions
+      fetchZoomPendingActions(id);
+
       // Load reactions
       if (session?.user?.id) {
         try {
@@ -1907,31 +2082,53 @@ export default function Home() {
   };
 
   const handleExecuteZoomAction = async (messageId: string, actionType: string, params: any) => {
+    const pendingAction = zoomPendingActions.find(a => a.message_id === messageId);
+    const pendingActionId = pendingAction?.id;
+
     setMessages(prev => prev.map(m => 
-      m.id === messageId ? { ...m, zoomAction: { type: actionType as any, params, confirmed: true, executed: false } } : m
+      m.id === messageId ? { ...m, zoomAction: { ...m.zoomAction, confirmed: true, executed: false } } : m
     ));
 
     try {
       const res = await fetch('/api/zoom/execute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: actionType, ...params })
+        body: JSON.stringify({ action: actionType, ...params, pendingActionId })
       });
 
       const data = await res.json();
       if (res.ok) {
-        setMessages(prev => prev.map(m => 
-          m.id === messageId ? { ...m, zoomAction: { ...m.zoomAction!, executed: true, result: data.result } } : m
-        ));
+        // Refresh pending actions from DB to get the latest status
+        if (activeChatId) fetchZoomPendingActions(activeChatId);
         showToast("Zoom action completed successfully");
       } else {
         throw new Error(data.error || 'Failed to execute Zoom action');
       }
     } catch (error: any) {
-      setMessages(prev => prev.map(m => 
-        m.id === messageId ? { ...m, zoomAction: { ...m.zoomAction!, executed: true, error: error.message } } : m
-      ));
+      // Refresh pending actions to show failure state
+      if (activeChatId) fetchZoomPendingActions(activeChatId);
       showToast(error.message, "error");
+    }
+  };
+
+  const handleRejectZoomAction = async (messageId: string) => {
+    const pendingAction = zoomPendingActions.find(a => a.message_id === messageId);
+    if (!pendingAction) return;
+
+    try {
+      const res = await fetch(`/api/zoom/pending-actions/${pendingAction.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'rejected' })
+      });
+      
+      if (res.ok) {
+        setZoomPendingActions(prev => prev.map(a => a.id === pendingAction.id ? { ...a, status: 'rejected' } : a));
+        showToast("Action rejected");
+      }
+    } catch (err) {
+      console.error('[ZOOM] Failed to reject action:', err);
+      showToast("Failed to reject action", "error");
     }
   };
 
@@ -4911,9 +5108,8 @@ export default function Home() {
                                       action={message.zoomAction || zoom}
                                       theme={theme}
                                       onConfirm={() => handleExecuteZoomAction(message.id, zoom.type!, zoom.params)}
-                                      onCancel={() => {
-                                        setMessages(prev => prev.map(m => m.id === message.id ? { ...m, zoomAction: undefined } : m));
-                                      }}
+                                      onCancel={() => handleRejectZoomAction(message.id)}
+                                      onRetry={() => handleExecuteZoomAction(message.id, zoom.type!, zoom.params)}
                                     />
                                   )}
 
