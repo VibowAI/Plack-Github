@@ -171,7 +171,7 @@ export default function ZoomWorkspace({
   return (
     <div 
       className={cn(
-        "h-full flex flex-col font-sans relative z-10 transition-colors duration-300 overflow-hidden",
+        "flex-1 flex flex-col min-h-0 font-sans relative z-10 transition-colors duration-300 overflow-hidden",
         theme === 'light' ? "bg-[#fcfcfc] text-neutral-800" :
         theme === 'cosmic' ? "bg-[#04020a] text-indigo-50" :
         "bg-[#060606] text-neutral-100"

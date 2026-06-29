@@ -559,6 +559,10 @@ export async function saveMessageVersion(parentMessageId: string, responseConten
     .select()
     .single();
   if (error) {
+    if (error.code === 'PGRST205') {
+      console.warn("Table message_versions not found, skipping version save.");
+      return null;
+    }
     logger.logError(LogCategory.DATABASE, "saveMessageVersion failed", error);
     throw error;
   }

@@ -249,12 +249,45 @@ function extractZoomAction(fullText: string): ExtractedZoomAction {
   };
 }
 
+// AI Activity Panel Component
+const AIActivityPanel = ({ actionName, theme, icon: Icon, colorClass }: { actionName: string, theme: string, icon?: any, colorClass?: string }) => {
+  const IconComponent = Icon || Sparkles;
+  return (
+    <div className={cn(
+      "flex items-center gap-3 p-2.5 px-4 rounded-xl border shadow-sm max-w-fit transition-all duration-300 animate-in fade-in slide-in-from-bottom-2",
+      theme === 'light' ? "bg-white border-neutral-200" : "bg-neutral-900 border-neutral-800"
+    )}>
+      <div className={cn(
+        "flex items-center justify-center w-6 h-6 rounded-lg",
+        colorClass || "bg-indigo-500/10 text-indigo-500"
+      )}>
+        <IconComponent size={14} className="animate-pulse" />
+      </div>
+      <span className={cn(
+        "text-[13px] font-bold font-sans tracking-tight",
+        theme === 'light' ? "text-neutral-700" : "text-neutral-300"
+      )}>
+        {actionName}
+      </span>
+      <span className={cn(
+        "flex items-center gap-1 ml-2",
+        theme === 'light' ? "text-neutral-400" : "text-neutral-500"
+      )}>
+        <span className="w-1 h-1 rounded-full bg-current animate-bounce" style={{ animationDelay: '0ms' }} />
+        <span className="w-1 h-1 rounded-full bg-current animate-bounce" style={{ animationDelay: '150ms' }} />
+        <span className="w-1 h-1 rounded-full bg-current animate-bounce" style={{ animationDelay: '300ms' }} />
+      </span>
+    </div>
+  );
+};
+
 // Zoom Action Card Component
-const ZoomActionCard = ({ action, onConfirm, onCancel, onRetry, theme }: { 
+const ZoomActionCard = ({ action, onConfirm, onCancel, onRetry, onAnalyze, theme }: { 
   action: any, 
   onConfirm: () => void, 
   onCancel: () => void, 
   onRetry?: () => void,
+  onAnalyze?: () => void,
   theme: string 
 }) => {
   const status = action.status || 'pending';
@@ -390,9 +423,9 @@ const ZoomActionCard = ({ action, onConfirm, onCancel, onRetry, theme }: {
                   Copy Invite
                 </button>
                 <button 
-                  onClick={() => {/* Analyze logic */}}
+                  onClick={onAnalyze}
                   className={cn(
-                    "flex-1 py-2 rounded-lg text-[11px] font-semibold transition-all",
+                    "flex-1 py-2 rounded-lg text-[11px] font-semibold transition-all cursor-pointer",
                     theme === 'light' ? "bg-neutral-100 text-neutral-600 hover:bg-neutral-200" : "bg-neutral-800 text-neutral-400 hover:bg-neutral-700"
                   )}
                 >
@@ -605,6 +638,7 @@ export default function Home() {
 
   // Zoom Integration States & Handlers
   const [zoomEmail, setZoomEmail] = useState<string | null>(null);
+  const [isZoomModeEnabled, setIsZoomModeEnabled] = useState<boolean>(true);
   const [isZoomLoading, setIsZoomLoading] = useState<boolean>(false);
   const [zoomPendingActions, setZoomPendingActions] = useState<any[]>([]);
 
@@ -3008,7 +3042,7 @@ export default function Home() {
               chatId: streamChatId,
               messageId: assistantMsgId,
               userId: session?.user?.id,
-              isZoomConnected: !!zoomEmail,
+              isZoomConnected: !!zoomEmail && isZoomModeEnabled,
               autoSaveMemories: autoSaveMemories,
               systemInstructionOverride: `AI Personality Tone to employ: ${targetPersonalityTone}\n` +
                 (customInstructions.trim() ? `User Custom Instructions to follow closely for every answer: "${customInstructions.trim()}"\n` : "") +
@@ -5082,15 +5116,13 @@ export default function Home() {
                         {/* Rendering core Text directly with rich features */}
                         <div className="w-full pl-0 text-neutral-900 leading-relaxed font-sans text-[15.5px]">
                           {contentToRender === '' && message.isStreaming && isLatestVersion ? (
-                            <div className="flex items-center space-x-2 py-4">
-                              <span className="w-1.5 h-1.5 rounded-full bg-neutral-300 animate-bounce" style={{ animationDelay: '0ms' }} />
-                              <span className="w-1.5 h-1.5 rounded-full bg-neutral-300 animate-bounce" style={{ animationDelay: '150ms' }} />
-                              <span className="w-1.5 h-1.5 rounded-full bg-neutral-300 animate-bounce" style={{ animationDelay: '300ms' }} />
-                              {message.isDeepResearch ? (
-                                <span className={cn("text-sm text-purple-400 font-medium ml-1 font-mono animate-pulse")}>Engaged in Deep Research multi-stage analytics...</span>
-                              ) : (
-                                isWebSearchEnabled && <span className={cn("text-sm text-neutral-500 font-medium ml-1", theme === 'light' ? "" : "text-neutral-400")}>Searching the web...</span>
-                              )}
+                            <div className="py-2">
+                              <AIActivityPanel 
+                                theme={theme}
+                                actionName={message.isDeepResearch ? "Deep Research Processing..." : isWebSearchEnabled ? "Searching the web..." : isZoomModeEnabled ? "Processing with Zoom..." : "Understanding request..."}
+                                icon={message.isDeepResearch ? Cpu : isWebSearchEnabled ? Search : isZoomModeEnabled ? Video : BrainCircuit}
+                                colorClass={message.isDeepResearch ? "bg-purple-500/10 text-purple-500" : isWebSearchEnabled ? "bg-indigo-500/10 text-indigo-500" : isZoomModeEnabled ? "bg-blue-500/10 text-blue-500" : undefined}
+                              />
                             </div>
                           ) : (
                             (() => {
@@ -5110,6 +5142,14 @@ export default function Home() {
                                       onConfirm={() => handleExecuteZoomAction(message.id, zoom.type!, zoom.params)}
                                       onCancel={() => handleRejectZoomAction(message.id)}
                                       onRetry={() => handleExecuteZoomAction(message.id, zoom.type!, zoom.params)}
+                                      onAnalyze={() => {
+                                        const meetingId = (message.zoomAction || zoom).result?.id || (message.zoomAction || zoom).params?.meetingId;
+                                        if (meetingId) {
+                                          handleSubmit(undefined, `Analyze Zoom meeting ID ${meetingId}. Provide an Executive Summary, Key Topics, Important Decisions, Action Items, Participants, Timeline, Questions Asked, Open Issues, Follow-ups, and Risks. Use real meeting data from the recording and transcript.`);
+                                        } else {
+                                          showToast("Could not determine Meeting ID to analyze.");
+                                        }
+                                      }}
                                     />
                                   )}
 
@@ -5122,6 +5162,12 @@ export default function Home() {
                                       theme={theme} 
                                       isStreaming={message.isStreaming && isLatestVersion}
                                     />
+                                  )}
+
+                                  {message.zoomAction?.result?.analysis && (
+                                    <div className="mt-2 pl-4 border-l-[3px] border-blue-500/30 w-full overflow-hidden">
+                                      <MarkdownRenderer content={message.zoomAction.result.analysis} theme={theme} />
+                                    </div>
                                   )}
                                 </div>
                               );
@@ -5939,22 +5985,45 @@ export default function Home() {
                                 </span>
                                 <div className="space-y-1">
                                   {zoomEmail && (
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setIsAttachmentMenuOpen(false);
-                                        setInputValue("Create a Zoom meeting named Sync for tomorrow at 2 PM");
-                                      }}
+                                    <div
+                                      onClick={() => setIsZoomModeEnabled(!isZoomModeEnabled)}
                                       className={cn(
-                                        "flex items-center gap-3 w-full text-left p-2 rounded-xl transition-all cursor-pointer group hover:bg-neutral-100 dark:hover:bg-white/[0.05]",
-                                        theme === 'light' ? "text-neutral-700" : "text-neutral-300"
+                                        "flex items-center justify-between gap-3 w-full text-left p-2.5 rounded-xl transition-all cursor-pointer hover:bg-neutral-100 dark:hover:bg-white/[0.05]",
+                                        theme === 'light' ? "text-neutral-800" : "text-neutral-100"
                                       )}
                                     >
-                                      <div className="w-7 h-7 rounded-lg bg-blue-500/10 flex items-center justify-center shrink-0">
-                                        <Video size={13} className="text-blue-500" />
+                                      <div className="flex items-center gap-3.5">
+                                        <div className={cn(
+                                          "w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-all duration-300",
+                                          isZoomModeEnabled
+                                            ? "bg-blue-500 text-white shadow-md shadow-blue-500/20"
+                                            : "bg-blue-500/10 text-blue-500"
+                                        )}>
+                                          <Video size={15} className="stroke-[2.2px]" />
+                                        </div>
+                                        <div className="flex flex-col text-left">
+                                          <span className="text-[13px] font-bold leading-none font-sans">
+                                            Zoom Mode
+                                          </span>
+                                          <span className={cn("text-[11px] leading-tight mt-1 opacity-65", theme === 'light' ? "text-neutral-600" : "text-neutral-400")}>
+                                            Native AI meeting assistant
+                                          </span>
+                                        </div>
                                       </div>
-                                      <span className="text-[12px] font-bold font-sans">Zoom Scheduler</span>
-                                    </button>
+                                      <button
+                                        type="button"
+                                        className={cn(
+                                          "w-8 h-4.5 rounded-full relative transition-colors duration-300 p-0.5 shrink-0",
+                                          isZoomModeEnabled ? "bg-blue-600" : "bg-neutral-300 dark:bg-neutral-700"
+                                        )}>
+                                        <motion.div
+                                          layout
+                                          initial={false}
+                                          animate={{ x: isZoomModeEnabled ? 14 : 0 }}
+                                          className="w-3.5 h-3.5 rounded-full bg-white shadow-sm"
+                                        />
+                                      </button>
+                                    </div>
                                   )}
                                 </div>
                               </div>
@@ -6125,22 +6194,43 @@ export default function Home() {
                                 </span>
                                 <div className="space-y-1">
                                   {zoomEmail && (
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setIsAttachmentMenuOpen(false);
-                                        setInputValue("Create a Zoom meeting named Sync for tomorrow at 2 PM");
-                                      }}
+                                    <div
+                                      onClick={() => setIsZoomModeEnabled(!isZoomModeEnabled)}
                                       className={cn(
-                                        "flex items-center gap-3 w-full text-left p-2 rounded-xl transition-all cursor-pointer group hover:bg-neutral-100 dark:hover:bg-white/[0.05]",
-                                        theme === 'light' ? "text-neutral-700" : "text-neutral-300"
+                                        "flex items-center justify-between gap-3 w-full text-left p-2.5 rounded-xl transition-all cursor-pointer hover:bg-neutral-100 dark:hover:bg-white/[0.05]",
+                                        theme === 'light' ? "text-neutral-800" : "text-neutral-100"
                                       )}
                                     >
-                                      <div className="w-7 h-7 rounded-lg bg-blue-500/10 flex items-center justify-center shrink-0">
-                                        <Video size={13} className="text-blue-500" />
+                                      <div className="flex items-center gap-4">
+                                        <div className={cn(
+                                          "w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-all duration-300",
+                                          isZoomModeEnabled
+                                            ? "bg-blue-500 text-white shadow-md shadow-blue-500/20"
+                                            : "bg-blue-500/10 text-blue-500"
+                                        )}>
+                                          <Video size={16} className="stroke-[2.2px]" />
+                                        </div>
+                                        <div className="flex flex-col text-left">
+                                          <span className="text-[13px] font-bold leading-none font-sans">
+                                            Zoom Mode
+                                          </span>
+                                          <span className={cn("text-[11px] leading-tight mt-1 opacity-65", theme === 'light' ? "text-neutral-600" : "text-neutral-400")}>
+                                            Native AI meeting assistant
+                                          </span>
+                                        </div>
                                       </div>
-                                      <span className="text-[12px] font-bold font-sans">Zoom Scheduler</span>
-                                    </button>
+                                      <button
+                                        type="button"
+                                        className={cn(
+                                          "w-8 h-4.5 rounded-full relative transition-colors duration-300 p-0.5 shrink-0",
+                                          isZoomModeEnabled ? "bg-blue-600" : "bg-neutral-300 dark:bg-neutral-700"
+                                        )}>
+                                        <div className={cn(
+                                          "w-3.5 h-3.5 rounded-full bg-white shadow-sm transition-transform duration-300",
+                                          isZoomModeEnabled ? "translate-x-[14px]" : "translate-x-0"
+                                        )} />
+                                      </button>
+                                    </div>
                                   )}
                                 </div>
                               </div>

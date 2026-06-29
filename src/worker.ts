@@ -1579,12 +1579,29 @@ app.post('/api/zoom/execute', async (c) => {
         });
       }
 
+      if (pendingActionId) {
+        await supabase
+          .from('zoom_pending_actions')
+          .update({ 
+            status: 'accepted', 
+            completed_at: new Date().toISOString(),
+            payload: { ...body, result: { report: rep, analysis: markdown } } 
+          })
+          .eq('id', pendingActionId);
+      }
+
       return c.json({ success: true, analysis: markdown, report: rep });
     }
 
     return c.json({ error: 'Invalid or unsupported action' }, 400);
   } catch (err: any) {
     console.error('[ZOOM API ERROR] Execution Failed:', err);
+    if (body.pendingActionId) {
+      await createAdminClient()
+        .from('zoom_pending_actions')
+        .update({ status: 'failed', payload: { ...body, error: err.message } })
+        .eq('id', body.pendingActionId);
+    }
     return c.json({ error: err.message || 'Zoom execution failed' }, 500);
   }
 });
@@ -2459,6 +2476,32 @@ Respond with a JSON object: { "requiresSearch": boolean }`;
       ${profileSummary?.recurringInterests ? `- Recurring Interests: ${profileSummary.recurringInterests}` : ''}
       ${profileSummary?.commonProjects ? `- Common Projects: ${profileSummary.commonProjects}` : ''}`;
     }
+
+    // 1. Current Date & Time Awareness
+    const now = new Date();
+    const timeZone = payload.timezone || 'UTC';
+    
+    let localDate = '';
+    let localTime = '';
+    let dayOfWeek = '';
+    
+    try {
+      localDate = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
+      localTime = new Intl.DateTimeFormat('en-US', { timeZone, hour: '2-digit', minute: '2-digit', hour12: false }).format(now);
+      dayOfWeek = new Intl.DateTimeFormat('en-US', { timeZone, weekday: 'long' }).format(now);
+    } catch (e) {
+      localDate = now.toISOString().split('T')[0];
+      localTime = now.toISOString().split('T')[1].substring(0, 5) + ' UTC';
+      dayOfWeek = 'Unknown';
+    }
+
+    baseInstruction += `\n\n=== RUNTIME CONTEXT ===\n` +
+      `Current UTC Time: ${now.toISOString()}\n` +
+      `User Timezone: ${timeZone}\n` +
+      `Local Date: ${localDate}\n` +
+      `Local Time: ${localTime}\n` +
+      `Day of Week: ${dayOfWeek}\n` +
+      `Always calculate relative dates (e.g., "tomorrow", "next tuesday") based on this runtime date. Never hallucinate past dates or use placeholder dates.`;
 
     // Check if Zoom is connected for this user
     let isZoomConnectedPayload = payload.isZoomConnected;
