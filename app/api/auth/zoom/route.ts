@@ -52,7 +52,7 @@ async function getAuthUser(c: any) {
 
 // 1. GET / (Canonical Zoom OAuth Initiation - mounted at /api/auth/zoom)
 zoomRouter.get('/', async (c) => {
-  console.log('[ZOOM AUTH START]');
+  console.log('[ZOOM AUTH START]', c.req.url);
 
   try {
     // Try Authorization header or cookie first
@@ -60,7 +60,17 @@ zoomRouter.get('/', async (c) => {
     
     // Fallback to userId query param
     if (!user) {
-      const userId = c.req.query('userId');
+      let userId = c.req.query('userId');
+      if (!userId) {
+        try {
+          const urlObj = new URL(c.req.url);
+          userId = urlObj.searchParams.get('userId');
+        } catch (e) {
+          // Ignore URL parsing errors
+        }
+      }
+      
+      console.log('[ZOOM QUERY userId]', userId);
       if (userId) {
         console.log('[USER ID FROM QUERY]');
         user = { id: userId } as any;

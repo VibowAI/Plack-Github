@@ -441,244 +441,269 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
   // --- Render ---
 
   return (
-    <div 
-      className={cn(
-        "flex flex-col border transition-all duration-700 w-full relative select-text",
-        isFullscreen ? "fixed inset-0 z-[9999] rounded-0 border-none h-screen w-screen" : "rounded-[32px] shadow-2xl my-10",
-        theme === 'light' ? "bg-white border-neutral-200" : "bg-neutral-950/90 border-neutral-800/80"
-      )}
-    >
-      {/* Header with Save Status */}
-      <div className={cn(
-        "flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 shrink-0 border-b transition-colors backdrop-blur-md sticky top-0 z-[60]",
-        theme === 'light' ? "bg-white/90 border-neutral-100" : "bg-neutral-900/90 border-neutral-800/60",
-        isFullscreen && "pt-safe"
-      )}>
-        <div className="flex items-center gap-2 sm:gap-3 overflow-hidden">
-          {isFullscreen && (
-            <button 
-              onClick={() => setIsFullscreen(false)}
-              className={cn(
-                "p-2 rounded-full transition-all active:scale-90 mr-1",
-                theme === 'light' ? "hover:bg-neutral-100 text-neutral-500" : "hover:bg-neutral-800 text-neutral-400"
-              )}
-            >
-              <X size={20} />
-            </button>
-          )}
-          <div className={cn(
-            "p-1.5 sm:p-2 rounded-xl shrink-0 transition-all",
-            theme === 'light' ? "bg-indigo-50 text-indigo-600 shadow-sm" : "bg-indigo-500/10 text-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.1)]"
-          )}>
-            <FileText size={isFullscreen ? 20 : 18} />
-          </div>
-          <div className="flex flex-col overflow-hidden">
+    <>
+      {/* INLINE PREVIEW (Always visible in chat flow) */}
+      <div 
+        className={cn(
+          "flex flex-col border transition-all duration-300 w-full relative select-text rounded-2xl shadow-sm my-4 overflow-hidden",
+          theme === 'light' ? "bg-white border-neutral-200" : "bg-neutral-900 border-neutral-800/80"
+        )}
+      >
+        <div className={cn(
+          "flex items-center justify-between px-4 py-3 shrink-0 border-b transition-colors",
+          theme === 'light' ? "bg-neutral-50/50 border-neutral-100" : "bg-neutral-950/50 border-neutral-800/60"
+        )}>
+          <div className="flex items-center gap-2">
+            <FileText size={16} className={theme === 'light' ? "text-indigo-600" : "text-indigo-400"} />
             <span className={cn(
-              "font-sans font-extrabold text-[14px] sm:text-[15px] tracking-tight truncate",
+              "font-sans font-extrabold text-[13px] tracking-tight truncate",
               theme === 'light' ? "text-neutral-900" : "text-neutral-100"
             )}>
               {editedTitle || "Untitled Document"}
             </span>
-            <span className="flex items-center gap-1.5 text-[9px] sm:text-[10px] font-bold uppercase tracking-widest opacity-40">
-              {saveStatus === 'saving' && <span className="flex items-center gap-1"><Sparkles size={10} className="animate-spin" /> Saving...</span>}
-              {saveStatus === 'saved' && <span className="flex items-center gap-1 text-emerald-500"><Check size={10} /> Saved</span>}
-              {saveStatus === 'failed' && <span className="flex items-center gap-1 text-rose-500">Failed</span>}
-              {saveStatus === 'idle' && <span>v{currentCheckpointIndex + 1}</span>}
-            </span>
           </div>
-        </div>
-
-        <div className="flex items-center gap-1 sm:gap-2 shrink-0">
-          <button
-            onClick={handleCopy}
-            className={cn("p-1.5 sm:p-2 rounded-xl transition-all cursor-pointer hover:scale-105 active:scale-95", theme === 'light' ? "hover:bg-neutral-100 text-neutral-500" : "hover:bg-neutral-800 text-neutral-400")}
-            title="Copy Content"
-          >
-            {copied ? <Check size={16} className="text-emerald-500" /> : <Copy size={16} />}
-          </button>
-          
-          {!isEditing ? (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleCopy}
+              className={cn("p-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1", theme === 'light' ? "hover:bg-neutral-200 text-neutral-600" : "hover:bg-neutral-800 text-neutral-300")}
+              title="Copy Content"
+            >
+              {copied ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
+              <span className="text-[11px] font-bold">Copy</span>
+            </button>
             <button
               onClick={() => setIsEditing(true)}
               className={cn(
-                "flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-xl text-xs sm:text-sm font-bold transition-all shadow-sm active:scale-95",
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer",
                 theme === 'light' 
-                  ? "bg-indigo-600 text-white hover:bg-indigo-700" 
-                  : "bg-indigo-500 text-white hover:bg-indigo-600"
+                  ? "bg-indigo-50 text-indigo-700 hover:bg-indigo-100" 
+                  : "bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30"
               )}
             >
               <Edit3 size={14} />
-              <span className="hidden xs:inline">Edit</span>
+              <span>Edit</span>
             </button>
-          ) : !isFullscreen && (
-            <button
-              onClick={handleStopEditing}
-              className={cn(
-                "p-1.5 sm:p-2 rounded-xl transition-all cursor-pointer hover:bg-rose-500/10 text-neutral-500 hover:text-rose-500",
-                theme === 'light' ? "hover:bg-neutral-100" : "hover:bg-neutral-800"
-              )}
-              title="Close Editor"
-            >
-              <X size={18} />
-            </button>
-          )}
+          </div>
+        </div>
+        <div className="px-5 py-4 max-h-[400px] overflow-y-auto" style={{ scrollbarWidth: 'none' }}>
+           <MarkdownRenderer content={activeDocument} theme={theme} />
         </div>
       </div>
 
-      {/* Main Content Area */}
-      <div 
-        ref={scrollContainerRef}
-        onClick={handleDocumentTap}
-        className={cn(
-          "flex-1 overflow-y-auto px-6 sm:px-10 py-8 sm:py-12 scroll-smooth select-text relative",
-          isFullscreen ? "h-full bg-white dark:bg-neutral-950 pb-40" : "min-h-[400px] sm:min-h-[600px] max-h-[900px]",
-          theme === 'light' ? "bg-white" : "bg-transparent"
-        )}
-      >
-        <div className="max-w-[800px] mx-auto">
-          {isRevisionStreaming && draftDocument ? (
-            <div className="prose prose-neutral dark:prose-invert max-w-none font-sans pt-2 pb-6">
-              <div className="flex items-center gap-3 mb-6 sm:mb-10 p-3 sm:p-4 bg-indigo-500/5 border border-dashed border-indigo-500/20 rounded-[20px] sm:rounded-[24px] animate-pulse">
-                 <Sparkles size={16} className="text-indigo-500" />
-                 <span className="text-[10px] sm:text-[11px] font-black text-indigo-500 uppercase tracking-widest">AI Drafting...</span>
-              </div>
-              <MarkdownRenderer content={draftDocument} theme={theme} />
-            </div>
-          ) : diffHunks !== null ? (
-            <div className="flex flex-col gap-8 sm:gap-12 pt-2 pb-32">
-              {diffHunks.map(hunk => {
-                const isPending = hunk.type === 'change' && hunk.status === 'pending';
-                return (
-                  <div key={hunk.id} className="relative group/hunk">
-                    {isPending && (
-                       <div className="hidden lg:flex absolute -left-20 top-0 flex-col gap-2 opacity-0 group-hover/hunk:opacity-100 transition-all duration-500 transform translate-x-4 group-hover/hunk:translate-x-0">
-                         <button onClick={() => handleHunkAction(hunk.id, 'accepted')} className="p-3 rounded-2xl border border-emerald-500/30 bg-emerald-50 text-emerald-600 shadow-lg hover:scale-110 active:scale-95 transition-all"><Check size={20} /></button>
-                         <button onClick={() => handleHunkAction(hunk.id, 'rejected')} className="p-3 rounded-2xl border border-rose-500/30 bg-rose-50 text-rose-600 shadow-lg hover:scale-110 active:scale-95 transition-all"><X size={20} /></button>
-                       </div>
-                    )}
-                    <div className={cn("font-sans transition-all duration-500", isPending && (theme === 'light' ? "bg-indigo-50/30 p-4 sm:p-8 sm:-mx-8 rounded-[24px] sm:rounded-[32px] border border-indigo-100/50 shadow-inner" : "bg-indigo-950/10 p-4 sm:p-8 sm:-mx-8 rounded-[24px] sm:rounded-[32px] border border-indigo-500/10 shadow-inner"))}>
-                       <MarkdownRenderer content={renderHunkText(hunk)} theme={theme} />
-                       {isPending && (
-                         <div className="lg:hidden flex gap-3 sm:gap-4 mt-6 sm:mt-8 pt-6 sm:pt-8 border-t border-indigo-200/50">
-                            <button onClick={() => handleHunkAction(hunk.id, 'accepted')} className="flex items-center justify-center gap-2 text-[11px] sm:text-[12px] font-black uppercase px-4 sm:px-6 py-3 sm:py-4 bg-emerald-500 text-white rounded-xl sm:rounded-2xl flex-1 shadow-lg shadow-emerald-500/30"><Check size={16}/> Accept</button>
-                            <button onClick={() => handleHunkAction(hunk.id, 'rejected')} className="flex items-center justify-center gap-2 text-[11px] sm:text-[12px] font-black uppercase px-4 sm:px-6 py-3 sm:py-4 bg-neutral-200 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 rounded-xl sm:rounded-2xl flex-1 active:scale-95"><Trash2 size={16}/> Reject</button>
-                         </div>
-                       )}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          ) : isEditing ? (
-            <div className="space-y-6 sm:space-y-8 pb-32">
-              <input 
-                type="text" 
-                value={editedTitle} 
-                onChange={(e) => setEditedTitle(e.target.value)} 
-                className={cn("w-full text-3xl sm:text-5xl font-black tracking-tighter px-0 bg-transparent border-none outline-none focus:ring-0 placeholder:opacity-20", theme === 'light' ? "text-neutral-900" : "text-white")} 
-                placeholder="Document Title" 
-              />
-              <UncontrolledEditor
-                editorRef={editorRef} 
-                initialHtml={activeDocument}
-                onChange={setActiveDocument}
-                className={cn(
-                  "w-full min-h-[500px] sm:min-h-[700px] font-mono text-[15px] sm:text-[17px] leading-[1.6] sm:leading-[1.8] px-0 py-2 sm:py-4 bg-transparent border-none outline-none focus:ring-0 whitespace-pre-wrap transition-opacity duration-300", 
-                  theme === 'light' ? "text-neutral-700" : "text-neutral-300"
-                )} 
-              />
-            </div>
-          ) : (
-            <div className="prose prose-neutral dark:prose-invert max-w-none font-sans pt-2 pb-24">
-              <h1 className={cn("text-3xl sm:text-5xl font-black tracking-tighter mb-6 sm:mb-10 mt-0", theme === 'light' ? "text-neutral-900" : "text-white")}>{editedTitle}</h1>
-              {activeDocument ? <MarkdownRenderer content={activeDocument} theme={theme} /> : <div className="text-center py-40 opacity-10 font-black uppercase tracking-[1em]">Empty</div>}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Bottom Sticky Composer: Ask Changes */}
+      {/* EDITOR SIDEBAR / FULLSCREEN (Conditionally rendered) */}
       <AnimatePresence>
-        {(isEditing || isFullscreen) && (
-          <motion.div 
-            initial={{ y: 200 }} 
-            animate={{ y: 0 }} 
-            exit={{ y: 200 }} 
-            className={cn(
-              "sticky bottom-0 left-0 right-0 z-[110] px-4 sm:px-10 py-6 sm:py-8 border-t backdrop-blur-3xl", 
-              isFullscreen ? "fixed" : "sticky",
-              theme === 'light' ? "bg-white/98 border-neutral-100 shadow-[0_-20px_50px_rgba(0,0,0,0.05)]" : "bg-neutral-900/98 border-neutral-800 shadow-[0_-20px_50px_rgba(0,0,0,0.3)]"
-            )}
-          >
-            <div className="max-w-[800px] mx-auto flex flex-col gap-4 sm:gap-6">
-              {revisionPending && diffHunks && (
-                <div className="flex items-center justify-between animate-in slide-in-from-bottom-2 duration-500">
-                  <div className="flex items-center gap-2 sm:gap-3">
-                    <div className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-indigo-500 animate-ping" />
-                    <span className="text-[10px] sm:text-[11px] font-black uppercase tracking-[0.1em] sm:tracking-[0.2em] opacity-60">Revision Pending</span>
+        {isEditing && (
+          <>
+            {/* Backdrop for Editor */}
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={handleStopEditing}
+              className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[90]"
+            />
+            
+            <motion.div 
+              initial={isMobile ? { y: '100%' } : { x: '100%' }}
+              animate={isMobile ? { y: 0 } : { x: 0 }}
+              exit={isMobile ? { y: '100%' } : { x: '100%' }}
+              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+              className={cn(
+                "flex flex-col border shadow-2xl select-text fixed z-[100] overflow-hidden",
+                isMobile 
+                  ? "inset-0 rounded-t-[32px] border-none" 
+                  : "right-0 top-0 bottom-0 w-[65vw] max-w-[800px] rounded-l-[32px] border-l",
+                theme === 'light' ? "bg-white border-neutral-200" : "bg-neutral-950 border-neutral-800"
+              )}
+            >
+              {/* Header with Save Status */}
+              <div className={cn(
+                "flex items-center justify-between px-6 py-4 shrink-0 border-b backdrop-blur-md sticky top-0 z-[60]",
+                theme === 'light' ? "bg-white/90 border-neutral-100" : "bg-neutral-900/90 border-neutral-800/60",
+                isMobile && "pt-safe"
+              )}>
+                <div className="flex items-center gap-3 overflow-hidden">
+                  <button 
+                    onClick={handleStopEditing}
+                    className={cn(
+                      "p-2 rounded-full transition-all cursor-pointer",
+                      theme === 'light' ? "hover:bg-neutral-100 text-neutral-500" : "hover:bg-neutral-800 text-neutral-400"
+                    )}
+                  >
+                    <X size={20} />
+                  </button>
+                  <div className={cn(
+                    "p-2 rounded-xl shrink-0",
+                    theme === 'light' ? "bg-indigo-50 text-indigo-600 shadow-sm" : "bg-indigo-500/10 text-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.1)]"
+                  )}>
+                    <FileText size={20} />
                   </div>
-                  <div className="flex gap-2 sm:gap-3">
-                    <button onClick={handleAcceptAll} className="px-4 sm:px-6 py-1.5 sm:py-2 bg-indigo-600 text-white rounded-full text-[10px] sm:text-[11px] font-black uppercase tracking-widest hover:bg-indigo-700 shadow-2xl active:scale-95 transition-all">Accept</button>
-                    <button onClick={handleRejectAll} className="px-4 sm:px-6 py-1.5 sm:py-2 bg-neutral-200 dark:bg-neutral-800 rounded-full text-[10px] sm:text-[11px] font-black uppercase tracking-widest hover:bg-neutral-300 dark:hover:bg-neutral-700 active:scale-95 transition-all">Reject</button>
+                  <div className="flex flex-col overflow-hidden">
+                    <span className={cn(
+                      "font-sans font-extrabold text-[15px] tracking-tight truncate",
+                      theme === 'light' ? "text-neutral-900" : "text-neutral-100"
+                    )}>
+                      {editedTitle || "Untitled Document"}
+                    </span>
+                    <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest opacity-40">
+                      {saveStatus === 'saving' && <span className="flex items-center gap-1"><Sparkles size={10} className="animate-spin" /> Saving...</span>}
+                      {saveStatus === 'saved' && <span className="flex items-center gap-1 text-emerald-500"><Check size={10} /> Saved</span>}
+                      {saveStatus === 'failed' && <span className="flex items-center gap-1 text-rose-500">Failed</span>}
+                      {saveStatus === 'idle' && <span>v{currentCheckpointIndex + 1}</span>}
+                    </span>
                   </div>
                 </div>
-              )}
 
-              <div className="flex items-center gap-2">
-                {isFullscreen && (
-                   <button 
-                    onClick={() => {
-                      if (currentCheckpointIndex > 0) {
-                        const prevIdx = currentCheckpointIndex - 1;
-                        setCurrentCheckpointIndex(prevIdx);
-                        setActiveDocument(checkpoints[prevIdx]);
-                      }
-                    }}
-                    disabled={currentCheckpointIndex === 0}
-                    className={cn(
-                      "p-3 rounded-2xl transition-all active:scale-90 shrink-0",
-                      theme === 'light' ? "bg-neutral-100 text-neutral-600" : "bg-neutral-800 text-neutral-400",
-                      currentCheckpointIndex === 0 && "opacity-30 cursor-not-allowed"
-                    )}
-                    title="Undo"
-                   >
-                     <RotateCcw size={18} />
-                   </button>
-                )}
-                <form onSubmit={handleAskChanges} className="relative flex-1">
-                  <input 
-                    type="text" 
-                    value={docChangePrompt} 
-                    onChange={(e) => setDocChangePrompt(e.target.value)} 
-                    placeholder="Ask changes..." 
-                    disabled={isRevisionStreaming} 
-                    className={cn(
-                      "w-full pl-6 sm:pl-8 pr-20 sm:pr-24 py-4 sm:py-5 rounded-2xl sm:rounded-[24px] border-2 text-[14px] sm:text-[16px] font-bold outline-none transition-all duration-500", 
-                      theme === 'light' ? "bg-neutral-50 border-neutral-100 focus:border-indigo-500 focus:bg-white text-neutral-900" : "bg-neutral-800 border-neutral-800 focus:border-indigo-500 focus:bg-neutral-900 text-white"
-                    )} 
-                  />
-                  <div className="absolute right-2 sm:right-3 top-1/2 -translate-y-1/2">
-                    {isRevisionStreaming ? (
-                      <button type="button" onClick={handleStopStreaming} className="flex items-center gap-1 sm:gap-2 px-4 sm:px-6 py-2 sm:py-2.5 rounded-[14px] sm:rounded-[18px] bg-rose-600 text-white text-[10px] sm:text-[12px] font-black uppercase tracking-widest shadow-xl active:scale-90 transition-all"><StopCircle size={14} /> Stop</button>
-                    ) : (
-                      <button type="submit" disabled={!docChangePrompt.trim()} className={cn("flex items-center gap-1 sm:gap-2 px-4 sm:px-6 py-2 sm:py-2.5 rounded-[14px] sm:rounded-[18px] text-[10px] sm:text-[12px] font-black uppercase tracking-widest transition-all", docChangePrompt.trim() ? "bg-indigo-600 text-white hover:bg-indigo-700 shadow-xl active:scale-95" : "bg-neutral-200 dark:bg-neutral-800 text-neutral-400 cursor-not-allowed")}>
-                        <Send size={14} /> Send
-                      </button>
-                    )}
-                  </div>
-                </form>
-              </div>
-              
-              {validationState && !validationState.isValid && (
-                <div className="px-4 sm:px-6 py-3 sm:py-4 bg-rose-500/5 border border-rose-500/10 rounded-[16px] sm:rounded-[20px] flex items-center gap-3 sm:gap-4 animate-in fade-in duration-500">
-                  <Info size={18} className="text-rose-500 shrink-0" />
-                  <span className="text-[12px] sm:text-[13px] font-bold text-rose-600/80">{validationState.message}</span>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={handleCopy}
+                    className={cn("p-2 rounded-xl transition-all cursor-pointer hover:scale-105 active:scale-95", theme === 'light' ? "hover:bg-neutral-100 text-neutral-500" : "hover:bg-neutral-800 text-neutral-400")}
+                    title="Copy Content"
+                  >
+                    {copied ? <Check size={16} className="text-emerald-500" /> : <Copy size={16} />}
+                  </button>
                 </div>
-              )}
-            </div>
-          </motion.div>
+              </div>
+
+              {/* Main Content Area */}
+              <div 
+                ref={scrollContainerRef}
+                onClick={handleDocumentTap}
+                className="flex-1 overflow-y-auto px-6 sm:px-12 py-8 sm:py-12 scroll-smooth select-text relative"
+              >
+                <div className="max-w-[800px] mx-auto">
+                  {isRevisionStreaming && draftDocument ? (
+                    <div className="prose prose-neutral dark:prose-invert max-w-none font-sans pt-2 pb-6">
+                      <div className="flex items-center gap-3 mb-6 sm:mb-10 p-3 sm:p-4 bg-indigo-500/5 border border-dashed border-indigo-500/20 rounded-[24px] animate-pulse">
+                        <Sparkles size={16} className="text-indigo-500" />
+                        <span className="text-[11px] font-black text-indigo-500 uppercase tracking-widest">AI Drafting...</span>
+                      </div>
+                      <MarkdownRenderer content={draftDocument} theme={theme} />
+                    </div>
+                  ) : diffHunks !== null ? (
+                    <div className="flex flex-col gap-8 sm:gap-12 pt-2 pb-32">
+                      {diffHunks.map(hunk => {
+                        const isPending = hunk.type === 'change' && hunk.status === 'pending';
+                        return (
+                          <div key={hunk.id} className="relative group/hunk">
+                            {isPending && (
+                              <div className="hidden lg:flex absolute -left-20 top-0 flex-col gap-2 opacity-0 group-hover/hunk:opacity-100 transition-all duration-500 transform translate-x-4 group-hover/hunk:translate-x-0">
+                                <button onClick={() => handleHunkAction(hunk.id, 'accepted')} className="p-3 rounded-2xl border border-emerald-500/30 bg-emerald-50 text-emerald-600 shadow-lg hover:scale-110 active:scale-95 transition-all cursor-pointer"><Check size={20} /></button>
+                                <button onClick={() => handleHunkAction(hunk.id, 'rejected')} className="p-3 rounded-2xl border border-rose-500/30 bg-rose-50 text-rose-600 shadow-lg hover:scale-110 active:scale-95 transition-all cursor-pointer"><X size={20} /></button>
+                              </div>
+                            )}
+                            <div className={cn("font-sans transition-all duration-500", isPending && (theme === 'light' ? "bg-indigo-50/30 p-4 sm:p-8 sm:-mx-8 rounded-[24px] sm:rounded-[32px] border border-indigo-100/50 shadow-inner" : "bg-indigo-950/10 p-4 sm:p-8 sm:-mx-8 rounded-[24px] sm:rounded-[32px] border border-indigo-500/10 shadow-inner"))}>
+                              <MarkdownRenderer content={renderHunkText(hunk)} theme={theme} />
+                              {isPending && (
+                                <div className="lg:hidden flex gap-3 sm:gap-4 mt-6 sm:mt-8 pt-6 sm:pt-8 border-t border-indigo-200/50">
+                                  <button onClick={() => handleHunkAction(hunk.id, 'accepted')} className="flex items-center justify-center gap-2 text-[11px] sm:text-[12px] font-black uppercase px-4 sm:px-6 py-3 sm:py-4 bg-emerald-500 text-white rounded-xl sm:rounded-2xl flex-1 shadow-lg shadow-emerald-500/30 cursor-pointer"><Check size={16}/> Accept</button>
+                                  <button onClick={() => handleHunkAction(hunk.id, 'rejected')} className="flex items-center justify-center gap-2 text-[11px] sm:text-[12px] font-black uppercase px-4 sm:px-6 py-3 sm:py-4 bg-neutral-200 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 rounded-xl sm:rounded-2xl flex-1 active:scale-95 cursor-pointer"><Trash2 size={16}/> Reject</button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    <div className="space-y-6 sm:space-y-8 pb-32">
+                      <input 
+                        type="text" 
+                        value={editedTitle} 
+                        onChange={(e) => setEditedTitle(e.target.value)} 
+                        className={cn("w-full text-3xl sm:text-5xl font-black tracking-tighter px-0 bg-transparent border-none outline-none focus:ring-0 placeholder:opacity-20", theme === 'light' ? "text-neutral-900" : "text-white")} 
+                        placeholder="Document Title" 
+                      />
+                      <UncontrolledEditor
+                        editorRef={editorRef} 
+                        initialHtml={activeDocument}
+                        onChange={setActiveDocument}
+                        className={cn(
+                          "w-full min-h-[500px] sm:min-h-[700px] font-mono text-[15px] sm:text-[17px] leading-[1.6] sm:leading-[1.8] px-0 py-2 sm:py-4 bg-transparent border-none outline-none focus:ring-0 whitespace-pre-wrap transition-opacity duration-300", 
+                          theme === 'light' ? "text-neutral-700" : "text-neutral-300"
+                        )} 
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Bottom Sticky Composer: Ask Changes */}
+              <div 
+                className={cn(
+                  "sticky bottom-0 left-0 right-0 z-[110] px-4 sm:px-10 py-6 sm:py-8 border-t backdrop-blur-3xl", 
+                  theme === 'light' ? "bg-white/98 border-neutral-100 shadow-[0_-20px_50px_rgba(0,0,0,0.05)]" : "bg-neutral-900/98 border-neutral-800 shadow-[0_-20px_50px_rgba(0,0,0,0.3)]"
+                )}
+              >
+                <div className="max-w-[800px] mx-auto flex flex-col gap-4 sm:gap-6">
+                  {revisionPending && diffHunks && (
+                    <div className="flex items-center justify-between animate-in slide-in-from-bottom-2 duration-500">
+                      <div className="flex items-center gap-2 sm:gap-3">
+                        <div className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-indigo-500 animate-ping" />
+                        <span className="text-[10px] sm:text-[11px] font-black uppercase tracking-[0.1em] sm:tracking-[0.2em] opacity-60">Revision Pending</span>
+                      </div>
+                      <div className="flex gap-2 sm:gap-3">
+                        <button onClick={handleAcceptAll} className="px-4 sm:px-6 py-1.5 sm:py-2 bg-indigo-600 text-white rounded-full text-[10px] sm:text-[11px] font-black uppercase tracking-widest hover:bg-indigo-700 shadow-2xl active:scale-95 transition-all cursor-pointer">Accept</button>
+                        <button onClick={handleRejectAll} className="px-4 sm:px-6 py-1.5 sm:py-2 bg-neutral-200 dark:bg-neutral-800 rounded-full text-[10px] sm:text-[11px] font-black uppercase tracking-widest hover:bg-neutral-300 dark:hover:bg-neutral-700 active:scale-95 transition-all cursor-pointer">Reject</button>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => {
+                        if (currentCheckpointIndex > 0) {
+                          const prevIdx = currentCheckpointIndex - 1;
+                          setCurrentCheckpointIndex(prevIdx);
+                          setActiveDocument(checkpoints[prevIdx]);
+                        }
+                      }}
+                      disabled={currentCheckpointIndex === 0}
+                      className={cn(
+                        "p-3 rounded-2xl transition-all active:scale-90 shrink-0 cursor-pointer",
+                        theme === 'light' ? "bg-neutral-100 text-neutral-600" : "bg-neutral-800 text-neutral-400",
+                        currentCheckpointIndex === 0 && "opacity-30 cursor-not-allowed"
+                      )}
+                      title="Undo"
+                    >
+                      <RotateCcw size={18} />
+                    </button>
+                    <form onSubmit={handleAskChanges} className="relative flex-1">
+                      <input 
+                        type="text" 
+                        value={docChangePrompt} 
+                        onChange={(e) => setDocChangePrompt(e.target.value)} 
+                        placeholder="Ask changes..." 
+                        disabled={isRevisionStreaming} 
+                        className={cn(
+                          "w-full pl-6 sm:pl-8 pr-20 sm:pr-24 py-4 sm:py-5 rounded-2xl sm:rounded-[24px] border-2 text-[14px] sm:text-[16px] font-bold outline-none transition-all duration-500", 
+                          theme === 'light' ? "bg-neutral-50 border-neutral-100 focus:border-indigo-500 focus:bg-white text-neutral-900" : "bg-neutral-800 border-neutral-800 focus:border-indigo-500 focus:bg-neutral-900 text-white"
+                        )} 
+                      />
+                      <div className="absolute right-2 sm:right-3 top-1/2 -translate-y-1/2">
+                        {isRevisionStreaming ? (
+                          <button type="button" onClick={handleStopStreaming} className="flex items-center gap-1 sm:gap-2 px-4 sm:px-6 py-2 sm:py-2.5 rounded-[14px] sm:rounded-[18px] bg-rose-600 text-white text-[10px] sm:text-[12px] font-black uppercase tracking-widest shadow-xl active:scale-90 transition-all cursor-pointer"><StopCircle size={14} /> Stop</button>
+                        ) : (
+                          <button type="submit" disabled={!docChangePrompt.trim()} className={cn("flex items-center gap-1 sm:gap-2 px-4 sm:px-6 py-2 sm:py-2.5 rounded-[14px] sm:rounded-[18px] text-[10px] sm:text-[12px] font-black uppercase tracking-widest transition-all cursor-pointer", docChangePrompt.trim() ? "bg-indigo-600 text-white hover:bg-indigo-700 shadow-xl active:scale-95" : "bg-neutral-200 dark:bg-neutral-800 text-neutral-400 cursor-not-allowed")}>
+                            <Send size={14} /> Send
+                          </button>
+                        )}
+                      </div>
+                    </form>
+                  </div>
+                  
+                  {validationState && !validationState.isValid && (
+                    <div className="px-4 sm:px-6 py-3 sm:py-4 bg-rose-500/5 border border-rose-500/10 rounded-[16px] sm:rounded-[20px] flex items-center gap-3 sm:gap-4 animate-in fade-in duration-500">
+                      <Info size={18} className="text-rose-500 shrink-0" />
+                      <span className="text-[12px] sm:text-[13px] font-bold text-rose-600/80">{validationState.message}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          </>
         )}
       </AnimatePresence>
-    </div>
+    </>
   );
 }

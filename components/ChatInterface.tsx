@@ -57,7 +57,9 @@ import {
   CheckCircle2,
   Radio,
   Video,
-  AudioLines
+  AudioLines,
+  MoreHorizontal,
+  ChevronLeft
 } from 'lucide-react';
 import PlackLive from '@/components/PlackLive';
 import MarkdownRenderer from '@/components/MarkdownRenderer';
@@ -67,7 +69,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { createClient } from '@/lib/supabase/client';
 import Image from 'next/image';
 import brandingLogo from '@/src/assets/images/branding_logo_1780697091587.png';
-import { createChat, getChats, updateChatTitle, deleteChat, saveMessage, getMessages, getFeedback, setFeedback, uploadAttachment, saveAttachmentRecord } from '@/lib/supabase/services';
+import { createChat, getChats, updateChatTitle, deleteChat, saveMessage, updateMessage, getMessages, getMessageReactions, setMessageReaction, getMessageVersions, saveMessageVersion, uploadAttachment, saveAttachmentRecord } from '@/lib/supabase/services';
 import { Memory } from '@/lib/supabase/memories';
 import { detectMemoryIntent } from '@/lib/ai/intent';
 import { createDocument, saveDocument, getDocuments, DocumentRecord } from '@/lib/supabase/documents';
@@ -349,6 +351,9 @@ export default function Home() {
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState<string>('');
   const [messageAppreciations, setMessageAppreciations] = useState<Record<string, 'like' | 'dislike'>>({});
+  const [messageVersions, setMessageVersions] = useState<Record<string, { id?: string, content: string, version: number }[]>>({});
+  const [activeMessageVersion, setActiveMessageVersion] = useState<Record<string, number>>({});
+  const [activeMoreMenu, setActiveMoreMenu] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [memoryToast, setMemoryToast] = useState<{ type: 'success' | 'error'; content: string } | null>(null);
   const [memoryIntentActive, setMemoryIntentActive] = useState(false);
@@ -1328,6 +1333,46 @@ export default function Home() {
       }
 
       const msgs = await getMessages(id);
+      
+      // Load reactions
+      if (session?.user?.id) {
+        try {
+          const reactions = await getMessageReactions(session.user.id, id);
+          const reactionMap: Record<string, 'like' | 'dislike'> = {};
+          reactions.forEach((r: any) => {
+            reactionMap[r.message_id] = r.reaction;
+          });
+          setMessageAppreciations(reactionMap);
+        } catch (err) {
+          logger.logError(LogCategory.DATABASE, "Failed to load reactions", err);
+        }
+      }
+
+      // Load versions
+      try {
+        const versionsData = await getMessageVersions(id);
+        const versionMap: Record<string, { version: number, content: string }[]> = {};
+        const activeVMap: Record<string, number> = {};
+        
+        versionsData.forEach((v: any) => {
+          if (!versionMap[v.message_id]) {
+            versionMap[v.message_id] = [];
+          }
+          versionMap[v.message_id].push({ version: v.version_number, content: v.content });
+        });
+        
+        // Sort each array by version_number ascending
+        Object.keys(versionMap).forEach(msgId => {
+          versionMap[msgId].sort((a, b) => a.version - b.version);
+          activeVMap[msgId] = versionMap[msgId].length; // Default to latest version
+        });
+        
+        setMessageVersions(versionMap);
+        setActiveMessageVersion(activeVMap);
+      } catch (err) {
+        logger.logError(LogCategory.DATABASE, "Failed to load message versions", err);
+      }
+
       // Map to UI model
       const formatted = msgs.map((m: any) => ({
         id: m.id.toString(),
@@ -1733,7 +1778,7 @@ export default function Home() {
   };
 
   const handleFeedback = async (msgId: string, type: 'like' | 'dislike') => {
-    if (!session?.user?.id) return;
+    if (!session?.user?.id || !activeChatId) return;
     
     // Toggle logic
     const currentFeedback = messageAppreciations[msgId];
@@ -1747,7 +1792,7 @@ export default function Home() {
     });
 
     try {
-      await setFeedback(session.user.id, msgId, newFeedback);
+      await setMessageReaction(session.user.id, activeChatId!, msgId, newFeedback);
     } catch (err) {
       logger.logError(LogCategory.DATABASE, "Failed to update feedback", err);
       // Revert optimism if failed
@@ -1815,25 +1860,66 @@ export default function Home() {
     const targetIndex = messages.findIndex(m => m.id === msgId);
     if (targetIndex === -1) return;
 
-    // Find the closest user prompt preceding the assistant message template
+    // Find the closest user prompt preceding the assistant message
     let promptText = "";
+    let promptAttachments: Attachment[] = [];
     for (let i = targetIndex - 1; i >= 0; i--) {
       if (messages[i].role === 'user') {
         promptText = messages[i].content;
+        promptAttachments = messages[i].attachments || [];
         break;
       }
     }
 
-    if (!promptText) {
+    if (!promptText && promptAttachments.length === 0) {
       logger.logWarn(LogCategory.CHAT, "Preceding user prompt not found for regeneration");
       return;
     }
 
-    // Sync database: delete assistant message and all succeeding messages
+    const currentMsg = messages[targetIndex];
+    
+    // Save current version to DB if it's the first time regenerating
+    try {
+      const existingVersions = messageVersions[msgId] || [];
+      if (existingVersions.length === 0) {
+        // Save V1
+        await saveMessageVersion(msgId, currentMsg.content, 1);
+        setMessageVersions(prev => ({
+          ...prev,
+          [msgId]: [{ version: 1, content: currentMsg.content }]
+        }));
+      }
+    } catch (err) {
+      logger.logError(LogCategory.DATABASE, "Failed to save initial message version", err);
+    }
+
+    // Prepare UI for new version streaming
+    const nextVersionNum = (messageVersions[msgId]?.length || 1) + 1;
+    setActiveMessageVersion(prev => ({ ...prev, [msgId]: nextVersionNum }));
+    
+    // Instead of deleting, we will reuse the message ID and stream the new content into it
+    // We update the messages array so that the target message is now empty and streaming
+    const updatedMessages = [...messages];
+    updatedMessages[targetIndex] = {
+      ...currentMsg,
+      content: '',
+      isStreaming: true,
+      activeStageIndex: undefined,
+      researchStatus: undefined,
+      researchTimeline: undefined,
+      isDeepResearch: useDeepResearch
+    };
+    
+    // Truncate messages after targetIndex for context purposes, but we don't delete them from DB yet
+    // Wait, the prompt says "Do NOT overwrite previous versions". We don't delete from DB, 
+    // but what about subsequent messages in the chat if there are any? 
+    // Usually, branching a chat implies we hide or delete subsequent messages.
+    // For simplicity, let's keep the existing UI behavior of deleting subsequent messages, 
+    // but the target message itself is just updated with the new version.
     try {
       const dbMessages = await getMessages(activeChatId);
-      if (dbMessages && dbMessages.length >= targetIndex) {
-        const dbMsgsToDelete = dbMessages.slice(targetIndex);
+      if (dbMessages && dbMessages.length > targetIndex + 1) {
+        const dbMsgsToDelete = dbMessages.slice(targetIndex + 1);
         if (dbMsgsToDelete.length > 0) {
           const supabase = createClient();
           await supabase.from('messages').delete().in('id', dbMsgsToDelete.map((m: any) => m.id));
@@ -1843,22 +1929,8 @@ export default function Home() {
       logger.logError(LogCategory.DATABASE, "Failed to sync regenerate deletions", err);
     }
 
-    // Cut off UI state at targetIndex immediately to clear Assistant's output
-    const updatedSlicedMessages = messages.slice(0, targetIndex);
-    setMessages(updatedSlicedMessages);
-    setActiveStreams(prev => ({
-      ...prev,
-      [activeChatId]: {
-        ...(prev[activeChatId] || {}),
-        messages: updatedSlicedMessages,
-        isStreaming: false
-      }
-    }));
-
-    // Trigger submission on next tick
-    setTimeout(() => {
-      handleSubmit(undefined, promptText);
-    }, 100);
+    // Trigger API request directly via handleSubmit
+    handleSubmit(undefined, promptText, msgId, nextVersionNum, promptAttachments);
   };
 
   const executeTitleGeneration = async (chatId: string, firstMsg: string) => {
@@ -2101,15 +2173,16 @@ export default function Home() {
   };
 
   // Send message with multi-stream tracking and settings incorporation
-  const handleSubmit = async (e?: React.FormEvent, customPrompt?: string) => {
+  const handleSubmit = async (e?: React.FormEvent, customPrompt?: string, regenerateMsgId?: string, nextVersionNum?: number, regenerateAttachments?: Attachment[]) => {
     if (e) e.preventDefault();
     const promptToSend = (customPrompt || inputValue).trim();
-    if (!promptToSend && attachments.length === 0) return;
+    if (!promptToSend && attachments.length === 0 && !regenerateMsgId && (!regenerateAttachments || regenerateAttachments.length === 0)) return;
 
     logger.logGroup(LogCategory.CHAT, "REQUEST START", {
       chatId: activeChatId,
       messageLength: promptToSend.length,
       selectedModel: activeModel,
+      isRegeneration: !!regenerateMsgId
     });
 
     // Check concurrency locks first before setting up any state
@@ -2203,7 +2276,7 @@ export default function Home() {
 
       // Reset input and capture current files
       setInputValue('');
-      const currentAttachments = [...attachments];
+      const currentAttachments = regenerateAttachments || [...attachments];
       setAttachments([]);
 
       // Reset textarea height
@@ -2211,22 +2284,39 @@ export default function Home() {
         textareaRef.current.style.height = 'auto';
       }
 
-      const userMsgId = `user-${crypto.randomUUID()}`;
-      assistantMsgId = `assistant-${crypto.randomUUID()}`;
+      let userMsgId = '';
+      if (!regenerateMsgId) {
+        userMsgId = `user-${crypto.randomUUID()}`;
+        assistantMsgId = `assistant-${crypto.randomUUID()}`;
+      } else {
+        assistantMsgId = regenerateMsgId;
+      }
 
-      // Add user message to UI
-      const newUserMessage: Message = {
-        id: userMsgId,
-        role: 'user',
-        content: promptToSend,
-        attachments: currentAttachments
-      };
+      let currentMessages = currentChatId ? (activeStreams[currentChatId]?.messages ?? messages) : [];
+      let updatedMessages = currentMessages;
 
-      const currentMessages = currentChatId ? (activeStreams[currentChatId]?.messages ?? messages) : [];
-      const updatedMessages = [...currentMessages, newUserMessage];
+      if (regenerateMsgId) {
+        const targetIndex = currentMessages.findIndex(m => m.id === regenerateMsgId);
+        if (targetIndex !== -1) {
+          updatedMessages = currentMessages.slice(0, targetIndex);
+          // Don't include the preceding user message in currentMessages for API, because handleSubmit adds it manually
+          currentMessages = currentMessages.slice(0, Math.max(0, targetIndex - 1));
+        }
+      } else {
+        // Add user message to UI
+        const newUserMessage: Message = {
+          id: userMsgId,
+          role: 'user',
+          content: promptToSend,
+          attachments: currentAttachments
+        };
 
-      // Render user message to UI immediately to make the user feel they are already inside the conversation
-      logAndSetMessages(updatedMessages);
+        updatedMessages = [...updatedMessages, newUserMessage];
+
+        // Render user message to UI immediately
+        logAndSetMessages(updatedMessages);
+      }
+      
       setIsStreaming(true);
 
       let bgChatPromise: Promise<{ newChatId: string; newChat: any } | null> | null = null;
@@ -2357,19 +2447,20 @@ export default function Home() {
           });
         });
 
-        saveMessage(chatIdStr, 'user', promptToSend).then(async savedMsg => {
-          if (currentAttachments.length > 0) {
-            await Promise.all(currentAttachments.map(async (att: Attachment) => {
-              if (att.localFile && userId) {
-                // Upload deferred file to storage now
-                try {
-                  const uploadResult = await uploadAttachment(userId, att.localFile, att.name);
-                  if (uploadResult && uploadResult.storagePath && uploadResult.publicUrl) {
-                    att.storagePath = uploadResult.storagePath;
-                    att.publicUrl = uploadResult.publicUrl;
-                    
-                    // Consume quota
-                    const isImage = att.type.startsWith('image/');
+        if (!regenerateMsgId) {
+          saveMessage(chatIdStr, 'user', promptToSend).then(async savedMsg => {
+            if (currentAttachments.length > 0) {
+              await Promise.all(currentAttachments.map(async (att: Attachment) => {
+                if (att.localFile && userId) {
+                  // Upload deferred file to storage now
+                  try {
+                    const uploadResult = await uploadAttachment(userId, att.localFile, att.name);
+                    if (uploadResult && uploadResult.storagePath && uploadResult.publicUrl) {
+                      att.storagePath = uploadResult.storagePath;
+                      att.publicUrl = uploadResult.publicUrl;
+                      
+                      // Consume quota
+                      const isImage = att.type.startsWith('image/');
                     await fetch("/api/usage/charge", {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
@@ -2401,8 +2492,9 @@ export default function Home() {
             });
           }
         }).catch(err => {
-          logger.logError(LogCategory.DATABASE, "Failed to save user message", err);
+          logger.logError(LogCategory.DATABASE, "Failed saving user message in background", err);
         });
+        }
       }
 
       const chatIdStr = streamChatId;
@@ -2911,9 +3003,28 @@ export default function Home() {
           }
 
           if (finalSavedChatId && finalSavedChatId !== 'temporary') {
-            await saveMessage(finalSavedChatId, 'model', finalSavedText, finalSavedReasoning).catch(err => {
-              logger.logError(LogCategory.DATABASE, "Failed to save assistant message", err);
-            });
+            if (regenerateMsgId && nextVersionNum) {
+              const versionNum = nextVersionNum;
+              
+              // 1. Update main messages table
+              await updateMessage(regenerateMsgId, finalSavedText, finalSavedReasoning).catch(err => {
+                logger.logError(LogCategory.DATABASE, "Failed to update regenerated assistant message", err);
+              });
+              
+              // 2. Save new version
+              await saveMessageVersion(regenerateMsgId, finalSavedText, versionNum).then(() => {
+                setMessageVersions(prev => {
+                  const existing = prev[regenerateMsgId] || [];
+                  return { ...prev, [regenerateMsgId]: [...existing, { version: versionNum, content: finalSavedText }] };
+                });
+              }).catch(err => {
+                logger.logError(LogCategory.DATABASE, "Failed to save message version", err);
+              });
+            } else {
+              await saveMessage(finalSavedChatId, 'model', finalSavedText, finalSavedReasoning).catch(err => {
+                logger.logError(LogCategory.DATABASE, "Failed to save assistant message", err);
+              });
+            }
           }
 
           // Save grounding metadata to search_history if exists
@@ -4341,6 +4452,11 @@ export default function Home() {
               {messages.map((message) => {
                 const isUser = message.role === 'user';
                 
+                const versions = messageVersions[message.id];
+                const currentV = activeMessageVersion[message.id] || (versions ? versions.length : 1);
+                const isLatestVersion = !versions || currentV === versions.length || (currentV === versions.length + 1 && message.isStreaming);
+                const contentToRender = isLatestVersion ? message.content : (versions && versions[currentV - 1] ? versions[currentV - 1].content : message.content);
+                
                 return (
                   <div 
                     key={message.id} 
@@ -4388,10 +4504,11 @@ export default function Home() {
                                 >
                                   {isImg ? (
                                     <div className="relative w-5 h-5 sm:w-6 sm:h-6 rounded-md overflow-hidden bg-slate-50 border border-slate-100 flex-shrink-0">
-                                      <img 
+                                      <Image 
                                         src={att.publicUrl ? att.publicUrl : `data:${att.type};base64,${att.data}`} 
                                         alt={att.name}
-                                        className="object-cover w-full h-full"
+                                        fill
+                                        className="object-cover"
                                         referrerPolicy="no-referrer"
                                       />
                                     </div>
@@ -4608,7 +4725,7 @@ export default function Home() {
 
                         {/* Rendering core Text directly with rich features */}
                         <div className="w-full pl-0 text-neutral-900 leading-relaxed font-sans text-[15.5px]">
-                          {message.content === '' && message.isStreaming ? (
+                          {contentToRender === '' && message.isStreaming && isLatestVersion ? (
                             <div className="flex items-center space-x-2 py-4">
                               <span className="w-1.5 h-1.5 rounded-full bg-neutral-300 animate-bounce" style={{ animationDelay: '0ms' }} />
                               <span className="w-1.5 h-1.5 rounded-full bg-neutral-300 animate-bounce" style={{ animationDelay: '150ms' }} />
@@ -4620,28 +4737,28 @@ export default function Home() {
                               )}
                             </div>
                           ) : (
-                            <>
-                              {(() => {
-                                const parsedDoc = extractDocumentBlock(message.content);
-                                
-                                return (
-                                  <div className="flex flex-col gap-4">
-                                    {parsedDoc.cleanText && (
-                                      <MarkdownRenderer content={parsedDoc.cleanText} theme={theme} />
-                                    )}
-                                    {parsedDoc.hasDocument && (
-                                      <InlineDocumentBlock 
-                                        id={parsedDoc.id}
-                                        userId={session?.user?.id}
-                                        title={parsedDoc.title} 
-                                        content={parsedDoc.content} 
-                                        theme={theme} 
-                                        isStreaming={message.isStreaming}
-                                      />
-                                    )}
-                                  </div>
-                                );
-                              })()}
+                            (() => {
+                              const parsedDoc = extractDocumentBlock(contentToRender);
+                              
+                              return (
+                                <div className="flex flex-col gap-4">
+                                  {parsedDoc.cleanText && (
+                                    <MarkdownRenderer content={parsedDoc.cleanText} theme={theme} />
+                                  )}
+                                  {parsedDoc.hasDocument && (
+                                    <InlineDocumentBlock 
+                                      id={parsedDoc.id}
+                                      userId={session?.user?.id}
+                                      title={parsedDoc.title} 
+                                      content={parsedDoc.content} 
+                                      theme={theme} 
+                                      isStreaming={message.isStreaming && isLatestVersion}
+                                    />
+                                  )}
+                                </div>
+                              );
+                            })()
+                          )}
 
                               {message.memoryLimitReached && (
                                 <div 
@@ -4682,34 +4799,6 @@ export default function Home() {
                                   theme === 'light' ? "text-neutral-400" : "text-neutral-500"
                                 )}>
                                   <button
-                                    onClick={() => handleCopyMessage(message.content)}
-                                    className={cn(
-                                      "p-1.5 rounded-full transition-colors active:scale-95 cursor-pointer",
-                                      theme === 'light' ? "hover:bg-neutral-100 hover:text-neutral-700" : "hover:bg-neutral-800 hover:text-neutral-300"
-                                    )}
-                                    title="Copy"
-                                  >
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-                                  </button>
-
-                                  <button
-                                    type="button"
-                                    onClick={() => handleRegenerate(message.id)}
-                                    disabled={isStreaming}
-                                    className={cn(
-                                      "p-1.5 rounded-full transition-colors active:scale-95 cursor-pointer",
-                                      isStreaming
-                                        ? "opacity-35 cursor-not-allowed text-neutral-400"
-                                        : (theme === 'light' ? "hover:bg-neutral-100 hover:text-neutral-700 text-neutral-400" : "hover:bg-neutral-800 hover:text-neutral-350 text-neutral-400")
-                                    )}
-                                    title="Regenerate Response"
-                                  >
-                                    <RefreshCw className="w-3.5 h-3.5" />
-                                  </button>
-                                  
-                                  <div className={cn("w-[1px] h-3.5 mx-1", theme === 'light' ? "bg-neutral-200" : "bg-neutral-800")} />
-
-                                  <button
                                     onClick={() => handleFeedback(message.id, 'like')}
                                     className={cn(
                                       "p-1.5 rounded-full transition-colors active:scale-95 cursor-pointer",
@@ -4733,38 +4822,107 @@ export default function Home() {
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={cn(messageAppreciations[message.id] === 'dislike' && "fill-current")}><path d="M17 14V2"/><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22h0a3.13 3.13 0 0 1-3-3.88Z"/></svg>
                                   </button>
 
-                                  {/* Sources Action Button (Polished Refinement) */}
-                                  {(() => {
-                                    const sources = getMessageSourcesList(message);
-                                    if (sources.length === 0) return null;
-                                    const total = sources.reduce((acc, c) => acc + c.count, 0);
+                                  {/* More Menu */}
+                                  <div className="relative">
+                                    <button
+                                      onClick={() => setActiveMoreMenu(activeMoreMenu === message.id ? null : message.id)}
+                                      className={cn(
+                                        "p-1.5 rounded-full transition-colors active:scale-95 cursor-pointer",
+                                        theme === 'light' ? "hover:bg-neutral-100 hover:text-neutral-700" : "hover:bg-neutral-800 hover:text-neutral-300"
+                                      )}
+                                      title="More"
+                                    >
+                                      <MoreHorizontal size={14} className="stroke-[2.5px]" />
+                                    </button>
 
-                                    return (
-                                      <button
+                                    {activeMoreMenu === message.id && (
+                                      <div className={cn(
+                                        "absolute top-full left-0 mt-1 z-50 min-w-[140px] p-1 rounded-xl border shadow-lg animate-in fade-in zoom-in-95",
+                                        theme === 'light' ? "bg-white border-neutral-200" : "bg-neutral-900 border-neutral-800"
+                                      )}>
+                                        <button
+                                          onClick={() => {
+                                            const sources = getMessageSourcesList(message);
+                                            if (sources.length > 0) {
+                                              setActiveSources(sources);
+                                              setIsSourcesSidebarOpen(true);
+                                            } else {
+                                              showToast("No sources for this response");
+                                            }
+                                            setActiveMoreMenu(null);
+                                          }}
+                                          className={cn(
+                                            "w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors text-left",
+                                            theme === 'light' ? "hover:bg-neutral-100 text-neutral-700" : "hover:bg-neutral-800 text-neutral-300"
+                                          )}
+                                        >
+                                          <Search size={14} />
+                                          Sources
+                                        </button>
+                                        <button
+                                          onClick={() => {
+                                            handleCopyMessage(contentToRender);
+                                            setActiveMoreMenu(null);
+                                          }}
+                                          className={cn(
+                                            "w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors text-left",
+                                            theme === 'light' ? "hover:bg-neutral-100 text-neutral-700" : "hover:bg-neutral-800 text-neutral-300"
+                                          )}
+                                        >
+                                          <Copy size={14} />
+                                          Copy
+                                        </button>
+                                        <button
+                                          onClick={() => {
+                                            handleRegenerate(message.id);
+                                            setActiveMoreMenu(null);
+                                          }}
+                                          disabled={isStreaming}
+                                          className={cn(
+                                            "w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors text-left",
+                                            isStreaming ? "opacity-50 cursor-not-allowed" : "",
+                                            theme === 'light' ? "hover:bg-neutral-100 text-neutral-700" : "hover:bg-neutral-800 text-neutral-300"
+                                          )}
+                                        >
+                                          <RefreshCw size={14} />
+                                          Regenerate
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  {/* Version Navigation (if versions exist) */}
+                                  {messageVersions[message.id] && messageVersions[message.id].length > 1 && (
+                                    <div className="flex items-center ml-2 border rounded-full px-1 py-0.5" style={{ borderColor: theme === 'light' ? '#e5e5e5' : '#262626' }}>
+                                      <button 
                                         onClick={() => {
-                                          console.log('[SOURCES OPEN] Sources panel triggered');
-                                          console.log('[SOURCES RESPONSE CHANGED] Loading sources for message:', message.id);
-                                          setActiveSources(sources);
-                                          console.log('[SOURCES CONTEXT LOADED] Context synchronized with response.');
-                                          setIsSourcesSidebarOpen(true);
+                                          const currentV = activeMessageVersion[message.id] || messageVersions[message.id].length;
+                                          if (currentV > 1) {
+                                            setActiveMessageVersion(prev => ({ ...prev, [message.id]: currentV - 1 }));
+                                          }
                                         }}
-                                        className={cn(
-                                          "flex items-center gap-1.5 h-8 px-2.5 rounded-full border text-[11px] font-bold transition-all active:scale-[0.96] shadow-xs cursor-pointer ml-1",
-                                          theme === 'light' 
-                                            ? "bg-indigo-50 border-indigo-100 text-indigo-600 hover:bg-indigo-100" 
-                                            : "bg-indigo-500/10 border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20"
-                                        )}
-                                        title={`View ${total} sources used for this response`}
+                                        className={cn("p-1 rounded-full", (activeMessageVersion[message.id] || messageVersions[message.id].length) > 1 ? (theme === 'light' ? "hover:bg-neutral-100 text-neutral-700" : "hover:bg-neutral-800 text-neutral-300") : "opacity-30 cursor-not-allowed")}
                                       >
-                                        <Search size={12} className="stroke-[2.5px]" />
-                                        <span>Sources</span>
+                                        <ChevronLeft size={12} />
                                       </button>
-                                    );
-                                  })()}
+                                      <span className="text-[10px] font-bold mx-1.5 min-w-[24px] text-center" style={{ color: theme === 'light' ? '#737373' : '#a3a3a3' }}>
+                                        V{activeMessageVersion[message.id] || messageVersions[message.id].length}
+                                      </span>
+                                      <button 
+                                        onClick={() => {
+                                          const currentV = activeMessageVersion[message.id] || messageVersions[message.id].length;
+                                          if (currentV < messageVersions[message.id].length) {
+                                            setActiveMessageVersion(prev => ({ ...prev, [message.id]: currentV + 1 }));
+                                          }
+                                        }}
+                                        className={cn("p-1 rounded-full", (activeMessageVersion[message.id] || messageVersions[message.id].length) < messageVersions[message.id].length ? (theme === 'light' ? "hover:bg-neutral-100 text-neutral-700" : "hover:bg-neutral-800 text-neutral-300") : "opacity-30 cursor-not-allowed")}
+                                      >
+                                        <ChevronRight size={12} />
+                                      </button>
+                                    </div>
+                                  )}
                                 </div>
                               )}
-                            </>
-                          )}
                         </div>
                       </div>
                     )}
@@ -4905,13 +5063,15 @@ export default function Home() {
                       >
                         {isImg ? (
                           <div className={cn(
-                            "w-5 h-5 rounded-md overflow-hidden flex-shrink-0 border",
+                            "relative w-5 h-5 rounded-md overflow-hidden flex-shrink-0 border",
                             theme === 'light' ? "border-neutral-200" : "border-neutral-800"
                           )}>
-                            <img 
+                            <Image 
                               src={`data:${att.type};base64,${att.data}`} 
                               alt={att.name}
-                              className="object-cover w-full h-full"
+                              fill
+                              className="object-cover"
+                              referrerPolicy="no-referrer"
                             />
                           </div>
                         ) : (
@@ -5977,7 +6137,13 @@ export default function Home() {
                       <div className="flex items-center gap-4">
                         <div className="relative shrink-0 w-14 h-14 rounded-full overflow-hidden shadow-[0_4px_12px_rgba(0,0,0,0.15)] bg-gradient-to-tr from-indigo-500 via-purple-600 to-pink-500 border-2 border-transparent group">
                            {session?.user?.user_metadata?.avatar_url ? (
-                             <img src={session.user.user_metadata.avatar_url} alt="Avatar" className="w-full h-full object-cover" />
+                             <Image 
+                               src={session.user.user_metadata.avatar_url} 
+                               alt="Avatar" 
+                               fill
+                               className="object-cover" 
+                               referrerPolicy="no-referrer"
+                             />
                            ) : (
                              <div className="w-full h-full flex items-center justify-center text-white font-bold text-lg">
                                {session?.user?.email?.charAt(0).toUpperCase() || 'U'}

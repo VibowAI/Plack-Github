@@ -220,6 +220,27 @@ export async function saveMessage(chatId: string, role: string, content: string,
   return data;
 }
 
+export async function updateMessage(messageId: string, content: string, reasoning?: string) {
+  const supabase = createClient();
+  logger.logGroup(LogCategory.DATABASE, "OPERATION: update message", { messageId, contentLength: content.length });
+  const { data, error } = await supabase
+    .from('messages')
+    .update({
+      content,
+      reasoning,
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', messageId)
+    .select()
+    .single();
+    
+  if (error) {
+    logger.logError(LogCategory.DATABASE, "updateMessage failed", error);
+    throw error;
+  }
+  return data;
+}
+
 let diagnosticsExecuted = false;
 
 export async function runStartupDiagnostics() {
@@ -485,44 +506,77 @@ export async function saveAttachmentRecord(attachment: {
   return data;
 }
 
-export async function getFeedback(userId: string) {
+export async function getMessageReactions(userId: string, chatId: string) {
   const supabase = createClient();
   const { data, error } = await supabase
-    .from('message_feedback')
-    .select('message_id, feedback_type')
-    .eq('user_id', userId);
+    .from('message_reactions')
+    .select('message_id, reaction')
+    .eq('user_id', userId)
+    .eq('chat_id', chatId);
   if (error) {
-    logger.logError(LogCategory.DATABASE, "getFeedback failed", error);
+    logger.logError(LogCategory.DATABASE, "getMessageReactions failed", error);
+    return [];
+  }
+  return data;
+}
+
+export async function setMessageReaction(userId: string, chatId: string, messageId: string, reaction: 'like' | 'dislike' | null) {
+  const supabase = createClient();
+  if (reaction === null) {
+    const { error } = await supabase
+      .from('message_reactions')
+      .delete()
+      .match({ user_id: userId, message_id: messageId });
+    if (error) {
+      logger.logError(LogCategory.DATABASE, "remove reaction failed", error);
+      throw error;
+    }
+  } else {
+    const { error } = await supabase
+      .from('message_reactions')
+      .upsert({
+        user_id: userId,
+        chat_id: chatId,
+        message_id: messageId,
+        reaction: reaction,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'message_id, user_id' });
+    if (error) {
+      logger.logError(LogCategory.DATABASE, "set reaction failed", error);
+      throw error;
+    }
+  }
+}
+
+export async function saveMessageVersion(parentMessageId: string, responseContent: string, versionNumber: number) {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from('message_versions')
+    .insert({
+      parent_message_id: parentMessageId,
+      response_content: responseContent,
+      version_number: versionNumber
+    })
+    .select()
+    .single();
+  if (error) {
+    logger.logError(LogCategory.DATABASE, "saveMessageVersion failed", error);
     throw error;
   }
   return data;
 }
 
-export async function setFeedback(userId: string, messageId: string, feedbackType: 'like' | 'dislike' | null) {
+export async function getMessageVersions(parentMessageId: string) {
   const supabase = createClient();
-  if (feedbackType === null) {
-    logger.logGroup(LogCategory.DATABASE, "OPERATION: remove feedback", { userId, messageId });
-    const { error } = await supabase
-      .from('message_feedback')
-      .delete()
-      .match({ user_id: userId, message_id: messageId });
-    if (error) {
-      logger.logError(LogCategory.DATABASE, "remove feedback failed", error);
-      throw error;
-    }
-  } else {
-    logger.logGroup(LogCategory.DATABASE, "OPERATION: set feedback", { userId, messageId, feedbackType });
-    const { error } = await supabase
-      .from('message_feedback')
-      .upsert({
-        user_id: userId,
-        message_id: messageId,
-        feedback_type: feedbackType,
-        updated_at: new Date().toISOString()
-      }, { onConflict: 'message_id, user_id' });
-    if (error) {
-      logger.logError(LogCategory.DATABASE, "set feedback failed", error);
-      throw error;
-    }
+  const { data, error } = await supabase
+    .from('message_versions')
+    .select('*')
+    .eq('parent_message_id', parentMessageId)
+    .order('version_number', { ascending: true });
+  if (error) {
+    logger.logError(LogCategory.DATABASE, "getMessageVersions failed", error);
+    return [];
   }
+  return data;
 }
+
