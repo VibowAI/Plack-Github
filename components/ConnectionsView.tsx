@@ -101,7 +101,7 @@ export default function ConnectionsView({
   return (
     <div 
       className={cn(
-        "h-screen flex flex-col font-sans relative z-10 transition-colors duration-300 overflow-x-hidden",
+        "h-full flex flex-col font-sans relative z-10 transition-colors duration-300 overflow-x-hidden",
         theme === 'light' ? "bg-[#fcfcfc] text-neutral-800" :
         theme === 'cosmic' ? "bg-[#04020a] text-indigo-50" :
         "bg-[#060606] text-neutral-100"

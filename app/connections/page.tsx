@@ -120,7 +120,7 @@ export default function ConnectionsPage() {
       <div className="flex h-screen overflow-hidden bg-background">
         <Sidebar />
         
-        <main className="flex-1 relative overflow-hidden">
+        <main className="flex-1 relative flex flex-col overflow-hidden">
           <ConnectionsView
             theme={theme}
             zoomEmail={zoomEmail}

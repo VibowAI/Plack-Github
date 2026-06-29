@@ -97,7 +97,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (session?.user?.id) {
-      refreshConnections();
+      const timer = setTimeout(() => {
+        refreshConnections();
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [session?.user?.id, refreshConnections]);
 

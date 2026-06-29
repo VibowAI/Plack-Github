@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { saveUserConnection } from '@/lib/supabase/connections';
+import { syncZoomData } from '@/lib/zoom-sync';
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -99,6 +100,11 @@ export async function GET(req: NextRequest) {
     );
 
     console.log(`[ZOOM CONNECTION SUCCESS] Zoom successfully connected for user ${state} (${accountEmail})`);
+
+    // Run initial sync asynchronously so the callback returns immediately
+    syncZoomData(state, process.env).catch(err => {
+      console.error('[ZOOM INITIAL SYNC ERROR] Failed to perform initial sync in callback:', err);
+    });
 
     // Return HTML page to close popup and notify parent window
     return new NextResponse(

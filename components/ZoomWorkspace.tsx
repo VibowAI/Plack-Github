@@ -7,7 +7,7 @@ import {
   Activity, ExternalLink, ArrowLeft, Check, LogOut,
   Search, RefreshCcw, Play, FileText, Info, 
   Clock, MapPin, MoreHorizontal, MessageSquare,
-  ShieldCheck, Zap, Layers, Globe
+  ShieldCheck, Zap, Layers, Globe, X
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -88,7 +88,11 @@ export default function ZoomWorkspace({
   };
 
   useEffect(() => {
-    fetchZoomData();
+    // Avoid calling setState synchronously within the effect body
+    const timer = setTimeout(() => {
+      fetchZoomData();
+    }, 0);
+    return () => clearTimeout(timer);
   }, [zoomEmail]);
 
   const handleSync = async () => {
@@ -167,12 +171,43 @@ export default function ZoomWorkspace({
   return (
     <div 
       className={cn(
-        "min-h-screen flex flex-col font-sans relative z-10 transition-colors duration-300 overflow-x-hidden",
+        "h-full flex flex-col font-sans relative z-10 transition-colors duration-300 overflow-hidden",
         theme === 'light' ? "bg-[#fcfcfc] text-neutral-800" :
         theme === 'cosmic' ? "bg-[#04020a] text-indigo-50" :
         "bg-[#060606] text-neutral-100"
       )}
     >
+      {/* Sticky Header */}
+      <header className={cn(
+        "flex-none h-[70px] px-6 md:px-10 flex items-center justify-between border-b backdrop-blur-md sticky top-0 z-20 transition-colors",
+        theme === 'light' ? "border-neutral-200/60 bg-white/70" :
+        theme === 'cosmic' ? "border-indigo-500/10 bg-[#09051c]/60" :
+        "border-neutral-800/60 bg-[#0a0a0a]/70"
+      )}>
+        <div className="flex items-center gap-4">
+          <button 
+            type="button"
+            onClick={onBackToConnections}
+            className="w-9 h-9 rounded-xl flex items-center justify-center hover:bg-neutral-500/10 transition-colors cursor-pointer"
+          >
+            <ArrowLeft size={18} />
+          </button>
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-blue-500 flex items-center justify-center shadow-lg shadow-blue-500/20">
+              <Video size={18} className="text-white" />
+            </div>
+            <h1 className="text-lg font-bold tracking-tight">Zoom Workspace</h1>
+          </div>
+        </div>
+
+        {zoomEmail && (
+          <div className="hidden sm:flex items-center gap-2.5 px-4 py-1.5 bg-emerald-500/5 border border-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-xl text-[12px] font-bold shadow-sm">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            {zoomEmail}
+          </div>
+        )}
+      </header>
+
       {/* Background Glows */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none -z-10">
         {theme === 'cosmic' && (
@@ -258,7 +293,7 @@ export default function ZoomWorkspace({
                 <div className="space-y-4">
                   <div className="p-4 rounded-2xl bg-blue-500/10 border border-blue-500/20 space-y-2">
                     <p className="text-[11px] font-bold text-blue-400 uppercase">Live Notes</p>
-                    <p className="text-[13px] text-neutral-300 leading-relaxed italic">"Discussing the Q3 roadmap and finalizing the budget allocation for marketing..."</p>
+                    <p className="text-[13px] text-neutral-300 leading-relaxed italic">&ldquo;Discussing the Q3 roadmap and finalizing the budget allocation for marketing...&rdquo;</p>
                   </div>
                   
                   <div className="space-y-3">
@@ -281,23 +316,9 @@ export default function ZoomWorkspace({
         )}
       </AnimatePresence>
 
-      {/* Main Container */}
-      <div className="flex-1 overflow-y-auto px-6 md:px-16 py-8 w-full max-w-6xl mx-auto space-y-12">
+      {/* Main Scrollable Content */}
+      <div className="flex-1 overflow-y-auto overflow-x-hidden px-6 md:px-16 py-8 w-full max-w-6xl mx-auto space-y-12 scroll-smooth">
         
-        {/* Top Navigation Breadcrumbs */}
-        <div className="flex items-center gap-2 text-xs font-semibold tracking-wide uppercase opacity-50">
-          <button 
-            type="button"
-            onClick={onBackToConnections}
-            className="hover:underline hover:opacity-100 flex items-center gap-1 transition-all cursor-pointer"
-          >
-            <ArrowLeft size={12} />
-            Apps
-          </button>
-          <span>/</span>
-          <span className="opacity-100">Zoom</span>
-        </div>
-
         {/* Profile Card Header */}
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6 pb-8 border-b border-neutral-200/50 dark:border-neutral-800/50">
           <div className="flex items-center gap-6">

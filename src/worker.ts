@@ -11,6 +11,8 @@ import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { getUserConnections, saveUserConnection, deleteUserConnection, getValidAccessToken } from '@/lib/supabase/connections';
 import { createZoomMeeting, listZoomMeetings, cancelZoomMeeting, updateZoomMeeting, getZoomMeeting, listZoomRecordings } from '@/lib/zoom';
 import { zoomRouter } from '@/app/api/auth/zoom/route';
+import { syncZoomData } from '@/lib/zoom-sync';
+import { getOrCreateAIReport } from '@/lib/zoom-reports';
 
 
 // Setup TypeScript bindings interface
@@ -1143,85 +1145,352 @@ app.post('/api/zoom/execute', async (c) => {
     }
 
     console.log(`[DEVELOPER LOG] Zoom API execution requested by ${user.email}. Action: ${action}`);
+    const supabase = createAdminClient();
+
+    if (action === 'sync') {
+      const result = await syncZoomData(user.id, c.env);
+      return c.json(result);
+    }
 
     if (action === 'list') {
-      const meetings = await listZoomMeetings(user.id, c.env);
-      return c.json({ success: true, meetings });
+      // 1. Load from Supabase first
+      const { data: dbMeetings, error: dbError } = await supabase
+        .from('zoom_meetings')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('start_time', { ascending: true });
+
+      if (dbError) {
+        console.error('[SUPABASE ERROR] Failed to fetch meetings:', dbError);
+      }
+
+      const meetings = dbMeetings || [];
+      console.log(`[MEETING LOADED] Loaded ${meetings.length} meetings from Supabase for user ${user.id}`);
+
+      // 2. Trigger background sync if empty or stale (e.g. last_synced_at is more than 5 minutes old)
+      const needsSync = meetings.length === 0 || 
+        meetings.some(m => !m.last_synced_at || (new Date().getTime() - new Date(m.last_synced_at).getTime() > 5 * 60 * 1000));
+
+      if (needsSync) {
+        console.log(`[ZOOM SYNC] Cached meetings are stale or empty. Triggering background sync.`);
+        syncZoomData(user.id, c.env).catch(err => {
+          console.error('[ZOOM BACKGROUND SYNC ERROR] Failed:', err);
+        });
+      }
+
+      // Format back to zoom structure for compatibility with frontend components
+      const formattedMeetings = meetings.map(m => ({
+        id: m.zoom_meeting_id,
+        topic: m.topic,
+        agenda: m.description,
+        start_time: m.start_time,
+        duration: m.duration,
+        timezone: m.timezone,
+        join_url: m.join_url,
+        start_url: m.start_url,
+        password: m.meeting_password,
+        status: m.meeting_status,
+        host_email: m.host_email
+      }));
+
+      return c.json({ success: true, meetings: formattedMeetings });
     }
 
     if (action === 'get') {
       if (!meetingId) return c.json({ error: 'meetingId is required' }, 400);
-      const meeting = await getZoomMeeting(user.id, meetingId, c.env);
-      return c.json({ success: true, meeting });
+
+      // Load from Supabase
+      const { data: m, error: dbError } = await supabase
+        .from('zoom_meetings')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('zoom_meeting_id', meetingId)
+        .maybeSingle();
+
+      if (dbError) {
+        return c.json({ error: 'Database query failed' }, 500);
+      }
+
+      if (!m) {
+        // Fallback: try to fetch directly from Zoom API and save
+        try {
+          const liveM = await getZoomMeeting(user.id, meetingId, c.env);
+          if (liveM) {
+            // Save to DB
+            const startTime = liveM.start_time ? new Date(liveM.start_time).toISOString() : null;
+            let endTime = null;
+            if (startTime && liveM.duration) {
+              endTime = new Date(new Date(startTime).getTime() + liveM.duration * 60 * 1000).toISOString();
+            }
+
+            const meetingData = {
+              user_id: user.id,
+              zoom_meeting_id: String(liveM.id),
+              topic: liveM.topic || 'Untitled Zoom Meeting',
+              description: liveM.agenda || liveM.description || '',
+              start_time: startTime,
+              end_time: endTime,
+              timezone: liveM.timezone || 'UTC',
+              duration: liveM.duration || 40,
+              join_url: liveM.join_url || '',
+              start_url: liveM.start_url || '',
+              meeting_password: liveM.password || '',
+              host_email: liveM.host_email || '',
+              meeting_status: liveM.status || 'scheduled',
+              last_synced_at: new Date().toISOString()
+            };
+
+            await supabase.from('zoom_meetings').upsert(meetingData, { onConflict: 'user_id,zoom_meeting_id' });
+            console.log(`[SUPABASE SAVE] Saved fetched meeting: ${liveM.topic} (ID: ${liveM.id})`);
+            return c.json({ success: true, meeting: liveM });
+          }
+        } catch (err) {
+          return c.json({ error: 'Meeting not found' }, 404);
+        }
+      }
+
+      const formatted = {
+        id: m.zoom_meeting_id,
+        topic: m.topic,
+        agenda: m.description,
+        start_time: m.start_time,
+        duration: m.duration,
+        timezone: m.timezone,
+        join_url: m.join_url,
+        start_url: m.start_url,
+        password: m.meeting_password,
+        status: m.meeting_status,
+        host_email: m.host_email
+      };
+
+      return c.json({ success: true, meeting: formatted });
     }
 
     if (action === 'create') {
       if (!topic || !startTime) {
         return c.json({ error: 'topic and startTime are required to create a meeting.' }, 400);
       }
+      // Create on Zoom
       const meeting = await createZoomMeeting(user.id, {
         topic,
         start_time: startTime,
         duration,
         timezone
       }, c.env);
-      console.log(`[DEVELOPER LOG] Zoom meeting created successfully by ${user.email}. Meeting ID: ${meeting.id}`);
+
+      console.log(`[ZOOM MEETING CREATED] Zoom meeting created successfully on Zoom. ID: ${meeting.id}`);
+
+      // Save to Supabase
+      const sTime = meeting.start_time ? new Date(meeting.start_time).toISOString() : new Date(startTime).toISOString();
+      let eTime = null;
+      if (sTime && (meeting.duration || duration)) {
+        eTime = new Date(new Date(sTime).getTime() + (meeting.duration || duration || 40) * 60 * 1000).toISOString();
+      }
+
+      const meetingData = {
+        user_id: user.id,
+        zoom_meeting_id: String(meeting.id),
+        topic: meeting.topic || topic,
+        description: meeting.agenda || '',
+        start_time: sTime,
+        end_time: eTime,
+        timezone: meeting.timezone || timezone || 'UTC',
+        duration: meeting.duration || duration || 40,
+        join_url: meeting.join_url || '',
+        start_url: meeting.start_url || '',
+        meeting_password: meeting.password || '',
+        host_email: meeting.host_email || '',
+        meeting_status: meeting.status || 'scheduled',
+        last_synced_at: new Date().toISOString()
+      };
+
+      const { error: saveErr } = await supabase
+        .from('zoom_meetings')
+        .upsert(meetingData, { onConflict: 'user_id,zoom_meeting_id' });
+
+      if (saveErr) {
+        console.error('[SUPABASE SAVE ERROR] Failed to save newly created meeting:', saveErr);
+      } else {
+        console.log(`[SUPABASE SAVE] Saved newly created Zoom meeting: ${topic} (ID: ${meeting.id})`);
+      }
+
       return c.json({ success: true, meeting });
     }
 
     if (action === 'update') {
       if (!meetingId) return c.json({ error: 'meetingId is required' }, 400);
+      
+      // Update on Zoom
       const result = await updateZoomMeeting(user.id, meetingId, {
         topic,
         start_time: startTime,
         duration,
         timezone
       }, c.env);
-      console.log(`[DEVELOPER LOG] Zoom meeting ${meetingId} updated successfully by ${user.email}`);
+
+      console.log(`[ZOOM MEETING UPDATED] Zoom meeting ${meetingId} updated successfully on Zoom.`);
+
+      // Update in Supabase
+      const { data: existing } = await supabase
+        .from('zoom_meetings')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('zoom_meeting_id', meetingId)
+        .maybeSingle();
+
+      const updatedTopic = topic || existing?.topic || 'Untitled Zoom Meeting';
+      const updatedStartTime = startTime ? new Date(startTime).toISOString() : existing?.start_time;
+      const updatedDuration = duration || existing?.duration || 40;
+      let updatedEndTime = null;
+      if (updatedStartTime && updatedDuration) {
+        updatedEndTime = new Date(new Date(updatedStartTime).getTime() + updatedDuration * 60 * 1000).toISOString();
+      }
+
+      const updateData = {
+        topic: updatedTopic,
+        start_time: updatedStartTime,
+        end_time: updatedEndTime,
+        duration: updatedDuration,
+        timezone: timezone || existing?.timezone || 'UTC',
+        last_synced_at: new Date().toISOString()
+      };
+
+      const { error: updateErr } = await supabase
+        .from('zoom_meetings')
+        .update(updateData)
+        .eq('user_id', user.id)
+        .eq('zoom_meeting_id', meetingId);
+
+      if (updateErr) {
+        console.error('[SUPABASE UPDATE ERROR] Failed to update meeting in Supabase:', updateErr);
+      } else {
+        console.log(`[SUPABASE UPDATE] Updated Zoom meeting ${meetingId} in Supabase.`);
+      }
+
       return c.json({ success: true, result });
     }
 
     if (action === 'cancel') {
       if (!meetingId) return c.json({ error: 'meetingId is required' }, 400);
+
+      // Cancel on Zoom
       await cancelZoomMeeting(user.id, meetingId, c.env);
-      console.log(`[DEVELOPER LOG] Zoom meeting ${meetingId} cancelled successfully by ${user.email}`);
+      console.log(`[ZOOM MEETING DELETED] Zoom meeting ${meetingId} cancelled on Zoom.`);
+
+      // Delete from Supabase
+      const { error: deleteErr } = await supabase
+        .from('zoom_meetings')
+        .delete()
+        .eq('user_id', user.id)
+        .eq('zoom_meeting_id', meetingId);
+
+      if (deleteErr) {
+        console.error('[SUPABASE DELETE ERROR] Failed to delete meeting from Supabase:', deleteErr);
+      } else {
+        console.log(`[SUPABASE DELETE] Deleted Zoom meeting ${meetingId} from Supabase.`);
+      }
+
       return c.json({ success: true });
     }
 
     if (action === 'recordings') {
-      const recordings = await listZoomRecordings(user.id, c.env);
-      return c.json({ success: true, recordings });
+      // Load recordings from Supabase
+      const { data: dbRecordings, error: recError } = await supabase
+        .from('zoom_recordings')
+        .select('*')
+        .eq('user_id', user.id);
+
+      if (recError) {
+        console.error('[SUPABASE RECORDING FETCH ERROR]', recError);
+      }
+
+      const recordings = dbRecordings || [];
+
+      // Trigger background sync if empty
+      if (recordings.length === 0) {
+        console.log(`[ZOOM SYNC] Cached recordings are empty. Triggering background sync.`);
+        syncZoomData(user.id, c.env).catch(err => {
+          console.error('[ZOOM RECORDING SYNC ERROR]', err);
+        });
+      }
+
+      // Map back to Zoom structure for frontend compatibility
+      const formattedRecordings = recordings.map(r => ({
+        id: r.zoom_meeting_id,
+        topic: 'Past Recorded Meeting', // We can look up the meeting topic or use a default
+        start_time: r.created_at,
+        duration: r.duration,
+        share_url: r.recording_url,
+        recording_files: r.transcript_available ? [{ file_type: 'TRANSCRIPT' }] : []
+      }));
+
+      return c.json({ success: true, recordings: formattedRecordings });
     }
 
     if (action === 'ai_analyze') {
       if (!meetingId) return c.json({ error: 'meetingId is required' }, 400);
-      const meeting = await getZoomMeeting(user.id, meetingId, c.env).catch(() => null) || { id: meetingId, topic: topic || 'Zoom Meeting' };
       
-      const ai = getGeminiClient([c.env.MY_GEMINI_API_KEY, c.env.MY_GEMINI_API_KEY_2, c.env.GEMINI_API_KEY]);
+      const res = await getOrCreateAIReport(
+        user.id,
+        meetingId,
+        [c.env.MY_GEMINI_API_KEY, c.env.MY_GEMINI_API_KEY_2, c.env.GEMINI_API_KEY]
+      );
+
+      if (!res.success) {
+        return c.json({ error: res.error || 'Failed to generate meeting analysis' }, 500);
+      }
+
+      // Convert structured report to a beautiful Markdown presentation for the frontend
+      const rep = res.report;
       
-      const prompt = `Analyze this Zoom meeting and generate a premium, rich smart analysis.
-Meeting Details:
-- ID: ${meeting.id}
-- Topic: ${meeting.topic}
-- Date/Time: ${meeting.start_time || startTime || 'Recent'}
-- Duration: ${meeting.duration || duration || 40} minutes
-- Host: ${meeting.host_email || 'You'}
+      let markdown = `# ${rep.executive_summary ? 'Smart Meeting Intelligence' : 'Meeting Analysis'}\n\n`;
+      
+      if (rep.executive_summary) {
+        markdown += `## Executive Summary\n${rep.executive_summary}\n\n`;
+      }
 
-Please generate a high-fidelity Markdown response containing:
-1. **Executive Summary** (A concise, professional overview of the meeting's core discussions)
-2. **Key Decisions** (A bulleted list of actual decisions made during the meeting)
-3. **Action Items** (Grounded tasks, including owner assignees and dates if applicable)
-4. **Risks & Open Questions** (Identified risks or unresolved items)
-5. **Meeting Effectiveness & Sentiment** (Sentiment score, participation density, and meeting effectiveness feedback)
+      if (rep.key_decisions && rep.key_decisions.length > 0) {
+        markdown += `## Key Decisions\n`;
+        rep.key_decisions.forEach((d: any) => {
+          markdown += `- **Decision:** ${d.decision}\n  *Rationale:* ${d.rationale}\n`;
+        });
+        markdown += `\n`;
+      }
 
-Keep the styling modern, professional, and matching Plack AI's elegant tone. Avoid generic placeholder phrasing. Make it look like a highly advanced AI system has processed the meeting audio and metadata.`;
+      if (rep.action_items && rep.action_items.length > 0) {
+        markdown += `## Action Items\n`;
+        rep.action_items.forEach((a: any) => {
+          markdown += `- [ ] **${a.task}** - *Assignee:* ${a.assignee} (Due: ${a.due_date})\n`;
+        });
+        markdown += `\n`;
+      }
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: prompt
-      });
+      if (rep.participants && rep.participants.length > 0) {
+        markdown += `## Attendees\n`;
+        markdown += rep.participants.map((p: string) => `- ${p}`).join('\n') + `\n\n`;
+      }
 
-      return c.json({ success: true, analysis: response.text });
+      if (rep.topics && rep.topics.length > 0) {
+        markdown += `## Topics Covered\n`;
+        rep.topics.forEach((t: any) => {
+          markdown += `- **${t.topic}** (${t.duration_spent})\n  ${t.summary}\n`;
+        });
+        markdown += `\n`;
+      }
+
+      if (rep.risks && rep.risks.length > 0) {
+        markdown += `## Identified Risks & Blockers\n`;
+        markdown += rep.risks.map((r: string) => `- ⚠️ ${r}`).join('\n') + `\n\n`;
+      }
+
+      if (rep.follow_ups && rep.follow_ups.length > 0) {
+        markdown += `## Follow-up Next Steps\n`;
+        rep.follow_ups.forEach((f: any) => {
+          markdown += `- **${f.step}** (Owner: ${f.owner})\n`;
+        });
+      }
+
+      return c.json({ success: true, analysis: markdown, report: rep });
     }
 
     return c.json({ error: 'Invalid or unsupported action' }, 400);
@@ -1244,9 +1513,39 @@ app.post('/api/zoom/chat', async (c) => {
       return c.json({ error: 'Prompt is required' }, 400);
     }
 
-    // Retrieve active Zoom meetings and recordings for context
-    const upcomingMeetings = await listZoomMeetings(user.id, c.env).catch(() => []);
-    const recordings = await listZoomRecordings(user.id, c.env).catch(() => []);
+    const supabase = createAdminClient();
+
+    // 1. Fetch persistent Zoom data from Supabase
+    const { data: dbMeetings } = await supabase
+      .from('zoom_meetings')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('start_time', { ascending: true });
+
+    const { data: dbRecordings } = await supabase
+      .from('zoom_recordings')
+      .select('*')
+      .eq('user_id', user.id);
+
+    const { data: dbReports } = await supabase
+      .from('zoom_ai_reports')
+      .select('*')
+      .eq('user_id', user.id);
+
+    const upcomingMeetings = dbMeetings || [];
+    const recordings = dbRecordings || [];
+    const reports = dbReports || [];
+
+    // Trigger asynchronous background sync if cached data is stale or empty
+    const needsSync = upcomingMeetings.length === 0 || 
+      upcomingMeetings.some(m => !m.last_synced_at || (new Date().getTime() - new Date(m.last_synced_at).getTime() > 5 * 60 * 1000));
+
+    if (needsSync) {
+      console.log(`[ZOOM SYNC] Cached meetings are stale or empty in chat assistant. Triggering background sync.`);
+      syncZoomData(user.id, c.env).catch(err => {
+        console.error('[ZOOM CHAT BACKGROUND SYNC ERROR]', err);
+      });
+    }
 
     const ai = getGeminiClient([c.env.MY_GEMINI_API_KEY, c.env.MY_GEMINI_API_KEY_2, c.env.GEMINI_API_KEY]);
 
@@ -1256,12 +1555,37 @@ app.post('/api/zoom/chat', async (c) => {
 Current Date and Time of user: 2026-06-29T03:11:43-07:00 (Year: 2026)
 Always resolve time references (e.g. "yesterday", "next week", "last month", "tomorrow") based on this current time: 2026-06-29.
 
-Here is the LIVE data from the user's Zoom account:
-=== UPCOMING MEETINGS ===
-${upcomingMeetings.length === 0 ? 'No upcoming meetings.' : JSON.stringify(upcomingMeetings, null, 2)}
+Here is the PERSISTENT data from the user's Zoom account retrieved from Supabase:
+=== UPCOMING & PAST MEETINGS ===
+${upcomingMeetings.length === 0 ? 'No meetings found.' : JSON.stringify(upcomingMeetings.map(m => ({
+  id: m.zoom_meeting_id,
+  topic: m.topic,
+  description: m.description,
+  start_time: m.start_time,
+  duration: m.duration,
+  timezone: m.timezone,
+  status: m.meeting_status,
+  join_url: m.join_url
+})), null, 2)}
 
 === CLOUD RECORDINGS ===
-${recordings.length === 0 ? 'No cloud recordings found.' : JSON.stringify(recordings, null, 2)}
+${recordings.length === 0 ? 'No cloud recordings found.' : JSON.stringify(recordings.map(r => ({
+  meeting_id: r.zoom_meeting_id,
+  recording_id: r.recording_id,
+  recording_url: r.recording_url,
+  transcript_available: r.transcript_available,
+  duration: r.duration,
+  created_at: r.created_at
+})), null, 2)}
+
+=== GENERATED MEETING INTELLIGENCE REPORTS ===
+${reports.length === 0 ? 'No AI reports generated yet.' : JSON.stringify(reports.map(rep => ({
+  meeting_id: rep.meeting_id,
+  summary: rep.executive_summary,
+  decisions: rep.key_decisions,
+  action_items: rep.action_items,
+  participants: rep.participants
+})), null, 2)}
 
 === MANDATES ===
 1. Only reference meetings and recordings in the list above, or clearly state that the account has no matching items.

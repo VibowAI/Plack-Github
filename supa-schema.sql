@@ -333,6 +333,145 @@ CREATE TRIGGER trigger_update_connections_updated_at
 CREATE INDEX IF NOT EXISTS idx_connections_user_id ON public.connections(user_id);
 
 
+-- ZOOM 3.0 PERSISTENT TABLES
+-- Stores persistent data for Zoom meetings, recordings, and AI-generated reports
+
+-- Zoom Connections
+CREATE TABLE IF NOT EXISTS public.zoom_connections (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  zoom_account_id text,
+  email text,
+  access_token text NOT NULL,
+  refresh_token text,
+  expires_at timestamptz,
+  scopes text,
+  created_at timestamptz DEFAULT now() NOT NULL,
+  updated_at timestamptz DEFAULT now() NOT NULL,
+  UNIQUE (user_id)
+);
+ALTER TABLE public.zoom_connections ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view own zoom_connections" ON public.zoom_connections;
+CREATE POLICY "Users can view own zoom_connections" ON public.zoom_connections FOR SELECT USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can insert own zoom_connections" ON public.zoom_connections;
+CREATE POLICY "Users can insert own zoom_connections" ON public.zoom_connections FOR INSERT WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can update own zoom_connections" ON public.zoom_connections;
+CREATE POLICY "Users can update own zoom_connections" ON public.zoom_connections FOR UPDATE USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can delete own zoom_connections" ON public.zoom_connections;
+CREATE POLICY "Users can delete own zoom_connections" ON public.zoom_connections FOR DELETE USING (auth.uid() = user_id);
+
+-- Zoom Meetings
+CREATE TABLE IF NOT EXISTS public.zoom_meetings (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  zoom_meeting_id text NOT NULL,
+  topic text NOT NULL,
+  description text,
+  start_time timestamptz,
+  end_time timestamptz,
+  timezone text,
+  duration integer,
+  join_url text,
+  start_url text,
+  meeting_password text,
+  host_email text,
+  meeting_status text,
+  participant_count integer DEFAULT 0,
+  calendar_event_id text,
+  created_at timestamptz DEFAULT now() NOT NULL,
+  updated_at timestamptz DEFAULT now() NOT NULL,
+  last_synced_at timestamptz DEFAULT now() NOT NULL,
+  UNIQUE (user_id, zoom_meeting_id)
+);
+ALTER TABLE public.zoom_meetings ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view own zoom_meetings" ON public.zoom_meetings;
+CREATE POLICY "Users can view own zoom_meetings" ON public.zoom_meetings FOR SELECT USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can insert own zoom_meetings" ON public.zoom_meetings;
+CREATE POLICY "Users can insert own zoom_meetings" ON public.zoom_meetings FOR INSERT WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can update own zoom_meetings" ON public.zoom_meetings;
+CREATE POLICY "Users can update own zoom_meetings" ON public.zoom_meetings FOR UPDATE USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can delete own zoom_meetings" ON public.zoom_meetings;
+CREATE POLICY "Users can delete own zoom_meetings" ON public.zoom_meetings FOR DELETE USING (auth.uid() = user_id);
+
+-- Zoom Recordings
+CREATE TABLE IF NOT EXISTS public.zoom_recordings (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  zoom_meeting_id text NOT NULL,
+  recording_id text,
+  recording_type text,
+  recording_url text,
+  transcript_available boolean DEFAULT false,
+  duration integer,
+  file_size bigint,
+  created_at timestamptz DEFAULT now() NOT NULL,
+  last_synced_at timestamptz DEFAULT now() NOT NULL,
+  UNIQUE (user_id, zoom_meeting_id, recording_id)
+);
+ALTER TABLE public.zoom_recordings ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view own zoom_recordings" ON public.zoom_recordings;
+CREATE POLICY "Users can view own zoom_recordings" ON public.zoom_recordings FOR SELECT USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can insert own zoom_recordings" ON public.zoom_recordings;
+CREATE POLICY "Users can insert own zoom_recordings" ON public.zoom_recordings FOR INSERT WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can update own zoom_recordings" ON public.zoom_recordings;
+CREATE POLICY "Users can update own zoom_recordings" ON public.zoom_recordings FOR UPDATE USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can delete own zoom_recordings" ON public.zoom_recordings;
+CREATE POLICY "Users can delete own zoom_recordings" ON public.zoom_recordings FOR DELETE USING (auth.uid() = user_id);
+
+-- Zoom AI Reports
+CREATE TABLE IF NOT EXISTS public.zoom_ai_reports (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  meeting_id text NOT NULL, -- zoom_meeting_id
+  executive_summary text,
+  key_decisions jsonb DEFAULT '[]'::jsonb,
+  action_items jsonb DEFAULT '[]'::jsonb,
+  participants jsonb DEFAULT '[]'::jsonb,
+  topics jsonb DEFAULT '[]'::jsonb,
+  risks jsonb DEFAULT '[]'::jsonb,
+  follow_ups jsonb DEFAULT '[]'::jsonb,
+  generated_at timestamptz DEFAULT now() NOT NULL,
+  UNIQUE (user_id, meeting_id)
+);
+ALTER TABLE public.zoom_ai_reports ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view own zoom_ai_reports" ON public.zoom_ai_reports;
+CREATE POLICY "Users can view own zoom_ai_reports" ON public.zoom_ai_reports FOR SELECT USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can insert own zoom_ai_reports" ON public.zoom_ai_reports;
+CREATE POLICY "Users can insert own zoom_ai_reports" ON public.zoom_ai_reports FOR INSERT WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can update own zoom_ai_reports" ON public.zoom_ai_reports;
+CREATE POLICY "Users can update own zoom_ai_reports" ON public.zoom_ai_reports FOR UPDATE USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can delete own zoom_ai_reports" ON public.zoom_ai_reports;
+CREATE POLICY "Users can delete own zoom_ai_reports" ON public.zoom_ai_reports FOR DELETE USING (auth.uid() = user_id);
+
+-- Trigger for zoom_connections updated_at
+DROP TRIGGER IF EXISTS trigger_update_zoom_connections_updated_at ON public.zoom_connections;
+CREATE TRIGGER trigger_update_zoom_connections_updated_at
+  BEFORE UPDATE ON public.zoom_connections
+  FOR EACH ROW
+  EXECUTE FUNCTION public.handle_updated_at();
+
+-- Trigger for zoom_meetings updated_at
+DROP TRIGGER IF EXISTS trigger_update_zoom_meetings_updated_at ON public.zoom_meetings;
+CREATE TRIGGER trigger_update_zoom_meetings_updated_at
+  BEFORE UPDATE ON public.zoom_meetings
+  FOR EACH ROW
+  EXECUTE FUNCTION public.handle_updated_at();
+
+-- Indexes Optimization
+CREATE INDEX IF NOT EXISTS idx_zoom_connections_user_id ON public.zoom_connections(user_id);
+CREATE INDEX IF NOT EXISTS idx_zoom_meetings_user_id ON public.zoom_meetings(user_id);
+CREATE INDEX IF NOT EXISTS idx_zoom_meetings_zoom_meeting_id ON public.zoom_meetings(zoom_meeting_id);
+CREATE INDEX IF NOT EXISTS idx_zoom_recordings_user_id ON public.zoom_recordings(user_id);
+CREATE INDEX IF NOT EXISTS idx_zoom_recordings_zoom_meeting_id ON public.zoom_recordings(zoom_meeting_id);
+CREATE INDEX IF NOT EXISTS idx_zoom_ai_reports_user_id ON public.zoom_ai_reports(user_id);
+CREATE INDEX IF NOT EXISTS idx_zoom_ai_reports_meeting_id ON public.zoom_ai_reports(meeting_id);
+
+
+
 
 
 
