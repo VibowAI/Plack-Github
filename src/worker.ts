@@ -1962,8 +1962,11 @@ Respond with a JSON object: { "requiresSearch": boolean }`;
     }
 
     // Check if Zoom is connected for this user
+    let isZoomConnectedPayload = payload.isZoomConnected;
     let isZoomConnected = false;
     let zoomEmail = "";
+    let zoomContextData = "";
+
     if (userId) {
       try {
         const conns = await getUserConnections(userId);
@@ -1971,6 +1974,45 @@ Respond with a JSON object: { "requiresSearch": boolean }`;
         if (zoomConn) {
           isZoomConnected = true;
           zoomEmail = zoomConn.account_email || "";
+
+          // Fetch some context
+          try {
+            const accessToken = await getValidAccessToken(userId, 'zoom');
+            if (accessToken) {
+              const [meetings, recordings] = await Promise.all([
+                listZoomMeetings(accessToken).catch(() => ({ meetings: [] })),
+                listZoomRecordings(accessToken).catch(() => ({ meetings: [] }))
+              ]);
+
+              const upcoming = (meetings.meetings || [])
+                .filter((m: any) => new Date(m.start_time).getTime() > Date.now())
+                .sort((a: any, b: any) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
+                .slice(0, 3);
+
+              const past = (recordings.meetings || [])
+                .sort((a: any, b: any) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime())
+                .slice(0, 3);
+
+              if (upcoming.length > 0 || past.length > 0) {
+                zoomContextData = "\nCURRENT ZOOM CONTEXT (REAL-TIME):\n";
+                if (upcoming.length > 0) {
+                  zoomContextData += "--- Upcoming Meetings ---\n";
+                  upcoming.forEach((m: any) => {
+                    zoomContextData += `- ${m.topic} | ${new Date(m.start_time).toLocaleString()} | ID: ${m.id}\n`;
+                  });
+                }
+                if (past.length > 0) {
+                  zoomContextData += "--- Recent Recordings ---\n";
+                  past.forEach((m: any) => {
+                    zoomContextData += `- ${m.topic} | ${new Date(m.start_time).toLocaleString()} | ID: ${m.id}\n`;
+                  });
+                }
+                zoomContextData += "Use this real-time data to answer questions accurately. If asked about summaries or action items for these meetings, inform the user you can analyze them if they provide the specific ID or if you can trigger a [ZOOM_ACTION:ai_analyze:{\"meetingId\": \"ID\"}] tool call.\n";
+              }
+            }
+          } catch (e) {
+            console.warn('[ZOOM CONTEXT FETCH FAILED]', e);
+          }
         }
       } catch (err) {
         console.error('[ZOOM] Failed to fetch connection status for chat context:', err);
@@ -1980,7 +2022,8 @@ Respond with a JSON object: { "requiresSearch": boolean }`;
     baseInstruction += `\n\n=== ZOOM CONNECTIONS SYSTEM ===\n`;
     if (isZoomConnected) {
       baseInstruction += `Zoom is currently CONNECTED for this user (Connected Account Email: ${zoomEmail}).\n` +
-        `You can assist the user in managing their Zoom meetings (create, list, update, cancel).\n` +
+        zoomContextData +
+        `You can assist the user in managing their Zoom meetings (create, list, update, cancel, analyze).\n` +
         `1. EXPLICIT CONFIRMATION MANDATE: Before any Zoom action requiring account modifications (create, update, cancel), you MUST clearly explain what will happen using natural language and request confirmation.\n` +
         `   Example: "I can create a Zoom meeting titled 'Design Review' for tomorrow at 9 AM. Would you like me to proceed?"\n` +
         `   At the VERY END of your response, output a special confirmation tag EXACTLY in this format on its own line:\n` +
@@ -1990,8 +2033,8 @@ Respond with a JSON object: { "requiresSearch": boolean }`;
         `     - For create: {"topic": "Meeting Topic", "startTime": "2026-06-30T09:00:00Z", "duration": 40, "timezone": "UTC"}\n` +
         `     - For update: {"meetingId": "123456789", "topic": "Updated Topic", "startTime": "2026-06-30T10:00:00Z", "duration": 40}\n` +
         `     - For cancel: {"meetingId": "123456789", "topic": "Meeting Topic"}\n` +
-        `2. Listing meetings: If the user wants to list meetings, explain what you found and then output a tag on its own line: [ZOOM_ACTION:list:{}] so the frontend can retrieve and render the active upcoming meetings.\n` +
-        `3. DO NOT output the tag in the middle of a sentence. It MUST be on its own line at the end of your response.\n` +
+        `2. Listing/Analyzing: If the user wants to list meetings, explain what you found and then output a tag: [ZOOM_ACTION:list:{}]. For analysis: [ZOOM_ACTION:ai_analyze:{"meetingId": "ID", "action": "summarize"}].\n` +
+        `3. DO NOT output tags in the middle of a sentence. They MUST be on their own line at the end of your response.\n` +
         `4. The user should NEVER see the raw [ZOOM_...] tag. Speak naturally. The frontend will intercept the tag and show buttons.`;
     } else {
       baseInstruction += `Zoom is NOT connected. If the user asks to schedule, view, or manage Zoom meetings, politely instruct them to connect their Zoom account first on the Connections page (/connections) before you can perform any Zoom actions.`;

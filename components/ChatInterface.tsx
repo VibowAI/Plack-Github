@@ -2811,6 +2811,7 @@ export default function Home() {
               chatId: streamChatId,
               messageId: assistantMsgId,
               userId: session?.user?.id,
+              isZoomConnected: !!zoomEmail,
               autoSaveMemories: autoSaveMemories,
               systemInstructionOverride: `AI Personality Tone to employ: ${targetPersonalityTone}\n` +
                 (customInstructions.trim() ? `User Custom Instructions to follow closely for every answer: "${customInstructions.trim()}"\n` : "") +
