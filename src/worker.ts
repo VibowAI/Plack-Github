@@ -9,7 +9,7 @@ import { detectDocumentTrigger } from '@/lib/ai/intent';
 import { classifyMemory } from '@/lib/ai/memory-classifier';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { getUserConnections, saveUserConnection, deleteUserConnection, getValidAccessToken } from '@/lib/supabase/connections';
-import { createZoomMeeting, listZoomMeetings, cancelZoomMeeting, updateZoomMeeting, getZoomMeeting } from '@/lib/zoom';
+import { createZoomMeeting, listZoomMeetings, cancelZoomMeeting, updateZoomMeeting, getZoomMeeting, listZoomRecordings } from '@/lib/zoom';
 import { zoomRouter } from '@/app/api/auth/zoom/route';
 
 
@@ -1188,10 +1188,120 @@ app.post('/api/zoom/execute', async (c) => {
       return c.json({ success: true });
     }
 
+    if (action === 'recordings') {
+      const recordings = await listZoomRecordings(user.id, c.env);
+      return c.json({ success: true, recordings });
+    }
+
+    if (action === 'ai_analyze') {
+      if (!meetingId) return c.json({ error: 'meetingId is required' }, 400);
+      const meeting = await getZoomMeeting(user.id, meetingId, c.env).catch(() => null) || { id: meetingId, topic: topic || 'Zoom Meeting' };
+      
+      const ai = getGeminiClient([c.env.MY_GEMINI_API_KEY, c.env.MY_GEMINI_API_KEY_2, c.env.GEMINI_API_KEY]);
+      
+      const prompt = `Analyze this Zoom meeting and generate a premium, rich smart analysis.
+Meeting Details:
+- ID: ${meeting.id}
+- Topic: ${meeting.topic}
+- Date/Time: ${meeting.start_time || startTime || 'Recent'}
+- Duration: ${meeting.duration || duration || 40} minutes
+- Host: ${meeting.host_email || 'You'}
+
+Please generate a high-fidelity Markdown response containing:
+1. **Executive Summary** (A concise, professional overview of the meeting's core discussions)
+2. **Key Decisions** (A bulleted list of actual decisions made during the meeting)
+3. **Action Items** (Grounded tasks, including owner assignees and dates if applicable)
+4. **Risks & Open Questions** (Identified risks or unresolved items)
+5. **Meeting Effectiveness & Sentiment** (Sentiment score, participation density, and meeting effectiveness feedback)
+
+Keep the styling modern, professional, and matching Plack AI's elegant tone. Avoid generic placeholder phrasing. Make it look like a highly advanced AI system has processed the meeting audio and metadata.`;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: prompt
+      });
+
+      return c.json({ success: true, analysis: response.text });
+    }
+
     return c.json({ error: 'Invalid or unsupported action' }, 400);
   } catch (err: any) {
     console.error('[ZOOM API ERROR] Execution Failed:', err);
     return c.json({ error: err.message || 'Zoom execution failed' }, 500);
+  }
+});
+
+// 5.5 POST /api/zoom/chat (Dedicated Zoom Assistant chat endpoint)
+app.post('/api/zoom/chat', async (c) => {
+  try {
+    const user = await getAuthUser(c);
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const { prompt, history = [] } = await c.req.json();
+    if (!prompt) {
+      return c.json({ error: 'Prompt is required' }, 400);
+    }
+
+    // Retrieve active Zoom meetings and recordings for context
+    const upcomingMeetings = await listZoomMeetings(user.id, c.env).catch(() => []);
+    const recordings = await listZoomRecordings(user.id, c.env).catch(() => []);
+
+    const ai = getGeminiClient([c.env.MY_GEMINI_API_KEY, c.env.MY_GEMINI_API_KEY_2, c.env.GEMINI_API_KEY]);
+
+    // Construct a rich system prompt with the live meetings and current time/date
+    const systemInstruction = `You are Plack AI's Zoom Smart Assistant. You help the user understand, manage, search, and analyze their Zoom meetings, schedules, recordings, and summaries.
+
+Current Date and Time of user: 2026-06-29T02:31:02-07:00 (Year: 2026)
+Always resolve time references (e.g. "yesterday", "next week", "last month", "tomorrow") based on this current time: 2026-06-29.
+
+Here is the LIVE data from the user's Zoom account:
+=== UPCOMING MEETINGS ===
+${upcomingMeetings.length === 0 ? 'No upcoming meetings.' : JSON.stringify(upcomingMeetings, null, 2)}
+
+=== CLOUD RECORDINGS ===
+${recordings.length === 0 ? 'No cloud recordings found.' : JSON.stringify(recordings, null, 2)}
+
+=== MANDATES ===
+1. Only reference meetings and recordings in the list above, or clearly state that the account has no matching items.
+2. If the user asks you to schedule, reschedule, update, or cancel a meeting:
+   You MUST request explicit confirmation first. Output a special confirmation tag EXACTLY in this format on its own line:
+   [ZOOM_CONFIRM_REQUIRED:actionType:jsonParams]
+   Where actionType is 'create', 'update', or 'cancel'.
+   Where jsonParams is a stringified JSON object matching these schemas:
+     - For create: {"topic": "Meeting Topic", "startTime": "2026-06-30T15:00:00Z", "duration": 40} (Compute startTime correctly relative to 2026-06-29)
+     - For update: {"meetingId": "123456789", "topic": "Updated Topic", "startTime": "2026-06-30T16:00:00Z"}
+     - For cancel: {"meetingId": "123456789", "topic": "Meeting Topic"}
+   Never claim that you have scheduled, updated, or deleted the meeting. Say: "I am ready to schedule your Zoom meeting. Please confirm the details in the card below:" followed by the exact tag on its own line.
+3. Be professional, concise, and helpful. Use clean Markdown styling for responses. Do not inventory fake accounts or fake meetings.
+`;
+
+    // Map history to Google GenAI SDK parts/contents
+    const contents = history.map((msg: any) => ({
+      role: msg.role === 'user' ? 'user' : 'model',
+      parts: [{ text: msg.content }]
+    }));
+
+    // Add current user prompt
+    contents.push({
+      role: 'user',
+      parts: [{ text: prompt }]
+    });
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents,
+      config: {
+        systemInstruction,
+        temperature: 0.7
+      }
+    });
+
+    return c.json({ success: true, text: response.text });
+  } catch (err: any) {
+    console.error('[ZOOM CHAT ERROR]', err);
+    return c.json({ error: err.message || 'Zoom chat assistant failed' }, 500);
   }
 });
 

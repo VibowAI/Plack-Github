@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { Search, ChevronRight, CheckCircle2, Video, BookOpen, MessageSquare, Github } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import ZoomWorkspace from './ZoomWorkspace';
 
 export interface ConnectionsViewProps {
   theme: 'light' | 'dark' | 'cosmic';
@@ -26,6 +27,18 @@ export default function ConnectionsView({
 }: ConnectionsViewProps) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all'|'connected'>('all');
+  const [showZoomWorkspace, setShowZoomWorkspace] = useState(true);
+
+  if (zoomEmail && showZoomWorkspace) {
+    return (
+      <ZoomWorkspace
+        theme={theme}
+        zoomEmail={zoomEmail}
+        onDisconnect={onDisconnectZoom}
+        onBackToConnections={() => setShowZoomWorkspace(false)}
+      />
+    );
+  }
 
   const apps = [
     {
@@ -259,15 +272,30 @@ export default function ConnectionsView({
                         In Development
                       </button>
                     ) : app.connected ? (
-                      <button 
-                        type="button"
-                        onClick={() => {
-                          if (app.id === 'zoom') onDisconnectZoom();
-                        }}
-                        className="text-[13px] font-bold text-red-500 hover:text-red-600 hover:underline transition-colors active:scale-95 cursor-pointer"
-                      >
-                        Disconnect Integration
-                      </button>
+                      <div className="flex items-center gap-3">
+                        <button 
+                          type="button"
+                          onClick={() => {
+                            if (app.id === 'zoom') onDisconnectZoom();
+                          }}
+                          className="text-[12.5px] font-bold text-red-500 hover:text-red-600 hover:underline transition-colors active:scale-95 cursor-pointer"
+                        >
+                          Disconnect
+                        </button>
+                        {app.id === 'zoom' && (
+                          <button 
+                            type="button"
+                            onClick={() => setShowZoomWorkspace(true)}
+                            className={cn(
+                              "px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1 active:scale-95 cursor-pointer",
+                              theme === 'light' ? "bg-neutral-900 text-white hover:bg-neutral-800" : "bg-white text-black hover:bg-neutral-200"
+                            )}
+                          >
+                            Open Workspace
+                            <ChevronRight size={13} />
+                          </button>
+                        )}
+                      </div>
                     ) : (
                       <button 
                         type="button"

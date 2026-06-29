@@ -147,3 +147,35 @@ export async function cancelZoomMeeting(userId: string, meetingId: string, env: 
 
   return { success: true };
 }
+
+export async function listZoomRecordings(userId: string, env: any) {
+  const token = await getValidAccessToken(userId, 'zoom', env);
+  if (!token) throw new Error('Zoom is not connected.');
+
+  // Fetch recordings from the last 90 days to ensure we capture any recent meetings
+  const today = new Date();
+  const priorDate = new Date();
+  priorDate.setDate(today.getDate() - 90);
+
+  const fromStr = priorDate.toISOString().split('T')[0];
+  const toStr = today.toISOString().split('T')[0];
+
+  const url = `https://api.zoom.us/v2/users/me/recordings?from=${fromStr}&to=${toStr}&page_size=30`;
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    }
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    console.warn(`[ZOOM CLOUD RECORDINGS] Failed to fetch: ${errText}`);
+    return [];
+  }
+
+  const data = await response.json() as any;
+  return data.meetings || [];
+}
+
