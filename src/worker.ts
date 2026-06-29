@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { getCookie } from 'hono/cookie';
 import { getGeminiClient, getGeminiClientForTitle } from '@/lib/gemini';
 import { getSystemPrompt } from '@/lib/ai/system-prompts';
 import { getMemories, getMemoryUsage, saveMemory, updateMemory, deleteMemory, deleteAllMemories } from '@/lib/supabase/memories';
@@ -1053,8 +1054,16 @@ app.get('/api/debug/websearch', async (c) => {
 async function getAuthUser(c: any) {
   const supabaseUrl = c.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = c.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  
+  // Try Authorization header first
   const authHeader = c.req.header('Authorization');
-  const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
+  let token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
+
+  // Fallback to cookie
+  if (!token) {
+    token = getCookie(c, 'sb-access-token') || null;
+  }
+
   if (!token) return null;
 
   try {

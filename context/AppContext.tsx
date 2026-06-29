@@ -100,8 +100,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setCustomColor(savedCustom);
     }, 0);
 
+    const updateAuthCookie = (sess: any) => {
+      if (typeof window === 'undefined') return;
+      if (sess?.access_token) {
+        document.cookie = `sb-access-token=${sess.access_token}; path=/; max-age=${sess.expires_in || 3600}; SameSite=None; Secure`;
+      } else {
+        document.cookie = `sb-access-token=; path=/; max-age=0; SameSite=None; Secure`;
+      }
+    };
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
+      updateAuthCookie(session);
       if (session?.user?.user_metadata) {
         const meta = session.user.user_metadata;
         if (meta.accent_color) {
@@ -120,6 +130,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
+      updateAuthCookie(session);
       if (session?.user?.user_metadata) {
         const meta = session.user.user_metadata;
         if (meta.accent_color) {

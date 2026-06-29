@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { getCookie } from 'hono/cookie';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { getUserConnections, saveUserConnection, deleteUserConnection } from '@/lib/supabase/connections';
 
@@ -14,8 +15,22 @@ export const zoomRouter = new Hono<{
 async function getAuthUser(c: any) {
   const supabaseUrl = c.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = c.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  
+  // Try Authorization header first
   const authHeader = c.req.header('Authorization');
-  const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
+  let token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
+  if (token) {
+    console.log('[AUTH HEADER FOUND]');
+  }
+
+  // Fallback to cookie
+  if (!token) {
+    token = getCookie(c, 'sb-access-token') || null;
+    if (token) {
+      console.log('[SUPABASE SESSION FOUND]');
+    }
+  }
+
   if (!token) return null;
 
   try {
@@ -24,6 +39,10 @@ async function getAuthUser(c: any) {
       global: { headers: { Authorization: `Bearer ${token}` } }
     });
     const { data: { user } } = await userClient.auth.getUser();
+    if (user && !token) {
+      // If we got user from cookie session
+      console.log('[SUPABASE SESSION FOUND]');
+    }
     return user;
   } catch (err) {
     console.error('[AUTH ERROR] getAuthUser failed:', err);
@@ -33,31 +52,33 @@ async function getAuthUser(c: any) {
 
 // 1. GET / (Canonical Zoom OAuth Initiation - mounted at /api/auth/zoom)
 zoomRouter.get('/', async (c) => {
-  console.log('[ZOOM AUTH REQUEST]');
-  console.log('[ZOOM ROUTE HIT]');
+  console.log('[ZOOM AUTH START]');
 
   try {
-    // Try Authorization header first
+    // Try Authorization header or cookie first
     let user = await getAuthUser(c);
     
-    // Fallback to userId query param (if direct redirect)
+    // Fallback to userId query param
     if (!user) {
       const userId = c.req.query('userId');
       if (userId) {
+        console.log('[USER ID FROM QUERY]');
         user = { id: userId } as any;
       }
     }
 
     if (!user) {
+      console.log('[ZOOM AUTH FAILED]');
       return c.json({ error: 'Unauthorized: No valid session or userId found.' }, 401);
     }
 
+    console.log('[USER VERIFIED]');
+
     const clientId = c.env.ZOOM_CLIENT_ID;
     if (!clientId) {
-      console.error('[ZOOM ERROR] ZOOM_CLIENT_ID not found');
+      console.log('[ZOOM AUTH FAILED] ZOOM_CLIENT_ID is not configured');
       return c.json({ error: 'Zoom Client ID is not configured on the server.' }, 500);
     }
-    console.log('[ZOOM CLIENT ID FOUND]');
 
     const origin = new URL(c.req.url).origin;
     const redirectUri = `${origin}/api/auth/zoom/callback`;
@@ -69,7 +90,7 @@ zoomRouter.get('/', async (c) => {
     zoomAuthUrl.searchParams.set('redirect_uri', redirectUri);
     zoomAuthUrl.searchParams.set('state', user.id);
 
-    console.log('[ZOOM AUTH URL GENERATED]', zoomAuthUrl.toString());
+    console.log('[ZOOM REDIRECT]');
 
     // If it's an AJAX/fetch request, return JSON. Otherwise, redirect.
     const isAjax = c.req.header('X-Requested-With') === 'XMLHttpRequest' || c.req.header('Accept')?.includes('application/json');
@@ -77,10 +98,10 @@ zoomRouter.get('/', async (c) => {
     if (isAjax) {
       return c.json({ url: zoomAuthUrl.toString() });
     } else {
-      console.log('[ZOOM REDIRECT]');
       return c.redirect(zoomAuthUrl.toString());
     }
   } catch (err: any) {
+    console.log('[ZOOM AUTH FAILED]');
     console.error('[ZOOM OAUTH ERROR] Failed to generate auth URL:', err);
     return c.json({ error: 'Failed to initiate Zoom authentication: ' + err.message }, 500);
   }
