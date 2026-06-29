@@ -12,7 +12,12 @@ import {
   Play,
   Volume2,
   MonitorUp,
-  Video
+  Video,
+  Menu,
+  MoreVertical,
+  VideoOff,
+  Sliders,
+  Sparkles
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/lib/utils';
@@ -98,7 +103,14 @@ export default function PlackLive({
   // Real-time audio analyzer properties for animations
   const [audioLevel, setAudioLevel] = useState(0); 
   const [permissionError, setPermissionError] = useState<string | null>(null);
-  const [subtitleText, setSubtitleText] = useState('');
+
+  // States to hold currently active live turn text
+  const [liveUserText, setLiveUserText] = useState('');
+  const [liveAiText, setLiveAiText] = useState('');
+
+  // Local active states for camera and screen sharing (mock visualization)
+  const [isCameraOn, setIsCameraOn] = useState(false);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
 
   // Accumulate text for saving conversational turns
   const currentUserTextRef = useRef<string>("");
@@ -111,12 +123,12 @@ export default function PlackLive({
   
   const micStreamRef = useRef<MediaStream | null>(null);
   const animationFrameRef = useRef<number | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
   
   // Official Gemini Live API instances
   const sessionRef = useRef<any>(null);
 
-  // Audio Playback context and precise chronological queue refs
+  // Audio Playback context and chronological queue refs
   const outputAudioCtxRef = useRef<AudioContext | null>(null);
   const nextStartTimeRef = useRef<number>(0);
   const activeSourcesRef = useRef<AudioBufferSourceNode[]>([]);
@@ -206,7 +218,6 @@ export default function PlackLive({
           // Cleanly transition state back to Listening once playback fully terminates
           if (voiceStateRef.current === 'Speaking') {
             setVoiceState('Listening');
-            setSubtitleText('Listening...');
           }
         }
       };
@@ -263,7 +274,6 @@ export default function PlackLive({
       // Retrieve Gemini API Key securely from Server API
       console.log("[LIVE SESSION CONNECTING]");
       setVoiceState('Thinking');
-      setSubtitleText("Connecting to Plack Live...");
 
       const keyRes = await fetch('/api/live-key');
       if (!keyRes.ok) {
@@ -316,6 +326,8 @@ export default function PlackLive({
               const uText = inputTranscription.text.trim();
               if (uText) {
                 currentUserTextRef.current = uText;
+                setLiveUserText(uText);
+                setLiveAiText(''); // clear previous AI response text
                 console.log("[AUDIO SENT & TRANSCRIBED]", uText);
                 console.log("[NEW TURN STARTED]");
                 saveLiveUserMessageRef.current?.(uText);
@@ -331,6 +343,8 @@ export default function PlackLive({
               for (const part of modelTurn.parts) {
                 if (part.text) {
                   currentAiTextRef.current += part.text;
+                  setLiveAiText(currentAiTextRef.current);
+                  setLiveUserText(''); // clear active user transcript
                   onLiveTranscriptUpdate?.({ userText: currentUserTextRef.current, aiText: currentAiTextRef.current });
                   console.log("[LIVE TRANSCRIPT UPDATED]");
                 }
@@ -355,6 +369,8 @@ export default function PlackLive({
               
               currentUserTextRef.current = "";
               currentAiTextRef.current = "";
+              setLiveUserText('');
+              setLiveAiText('');
               onLiveTranscriptUpdate?.({ userText: '', aiText: '' });
               console.log("[LIVE TRANSCRIPT UPDATED]");
               setVoiceState('Listening');
@@ -369,6 +385,8 @@ export default function PlackLive({
               
               currentUserTextRef.current = "";
               currentAiTextRef.current = "";
+              setLiveUserText('');
+              setLiveAiText('');
               onLiveTranscriptUpdate?.({ userText: '', aiText: '' });
               console.log("[LIVE TRANSCRIPT UPDATED]");
               setVoiceState('Listening');
@@ -378,12 +396,10 @@ export default function PlackLive({
             console.log("[LIVE SESSION CLOSED]");
             console.log("[LIVE ENDED]");
             setVoiceState('Ready');
-            setSubtitleText("Session ended.");
           },
           onerror: (err) => {
             console.error("[LIVE ERROR]", err);
             setVoiceState('Connection Lost');
-            setSubtitleText("Unable to connect to Plack Live.");
             setPermissionError("Unable to connect to Plack Live.");
           }
         }
@@ -392,7 +408,6 @@ export default function PlackLive({
       sessionRef.current = session;
       console.log("[LIVE SESSION CONNECTED]");
       setVoiceState('Listening');
-      setSubtitleText("Listening...");
 
       // Configure ScriptProcessor to capture microphone input
       const processor = inputContext.createScriptProcessor(4096, 1, 1);
@@ -405,7 +420,7 @@ export default function PlackLive({
         
         const inputData = e.inputBuffer.getChannelData(0);
         
-        // 1. Calculate input raw sample Root Mean Square (RMS) for instant local interruption
+        // Calculate input raw sample Root Mean Square (RMS) for instant local interruption
         let squareSum = 0;
         for (let i = 0; i < inputData.length; i++) {
           squareSum += inputData[i] * inputData[i];
@@ -420,10 +435,9 @@ export default function PlackLive({
           stopAllPlayback();
           console.log("[PLAYBACK STOPPED]");
           setVoiceState('Listening');
-          setSubtitleText('Listening...');
         }
 
-        // 2. Stream audio payload to the websocket session
+        // Stream audio payload to the websocket session
         const pcmBuffer = new Int16Array(inputData.length);
         for (let i = 0; i < inputData.length; i++) {
           const s = Math.max(-1, Math.min(1, inputData[i]));
@@ -436,7 +450,6 @@ export default function PlackLive({
           sessionRef.current.sendRealtimeInput({
             audio: { data: base64, mimeType: "audio/pcm;rate=16000" }
           });
-          // Avoid flooding system console, only debug occasional packages
         } catch (err) {
           console.warn("Failed streaming audio input chunk:", err);
         }
@@ -503,7 +516,6 @@ export default function PlackLive({
       const t = setTimeout(() => {
         setIsMuted(false);
         setVoiceState('Ready');
-        setSubtitleText('Initializing...');
         initMicrophoneAndLiveSession();
       }, 0);
 
@@ -512,123 +524,13 @@ export default function PlackLive({
         cleanUpSession();
       };
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
-  // Setup gorgeous flowing animated horizontal wave spectrum (Apple Intelligence inspired)
+  // Automatic scrolling to the bottom of the conversation area
   useEffect(() => {
-    if (!isOpen) return;
-
-    let animFrame: number;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const handleResize = () => {
-      const rect = canvas.parentElement?.getBoundingClientRect();
-      const currentWidth = rect?.width || window.innerWidth;
-      const currentHeight = rect?.height || 140;
-      
-      canvas.width = currentWidth * window.devicePixelRatio;
-      canvas.height = currentHeight * window.devicePixelRatio;
-      canvas.style.width = `${currentWidth}px`;
-      canvas.style.height = `${currentHeight}px`;
-    };
-
-    window.addEventListener('resize', handleResize);
-    handleResize();
-
-    // Soft Indigo / Violet palette matches dark atmospheric aurora glows
-    const waveItems = [
-      { color: 'rgba(56, 189, 248, 0.72)', amplitude: 28, frequency: 0.007, speed: 0.024, phase: 0 },
-      { color: 'rgba(99, 102, 241, 0.62)', amplitude: 20, frequency: 0.011, speed: -0.018, phase: 1.5 },
-      { color: 'rgba(168, 85, 247, 0.55)', amplitude: 16, frequency: 0.014, speed: 0.032, phase: 3.2 },
-      { color: 'rgba(45, 212, 191, 0.45)', amplitude: 12, frequency: 0.009, speed: -0.012, phase: 4.8 }
-    ];
-
-    const renderLoop = () => {
-      const w = canvas.width;
-      const h = canvas.height;
-      if (w === 0 || h === 0) return;
-      
-      ctx.clearRect(0, 0, w, h);
-      ctx.save();
-      ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
-
-      const dW = w / window.devicePixelRatio;
-      const dH = h / window.devicePixelRatio;
-
-      let multiplierAmp = 1.0;
-      let multiplierFreq = 1.0;
-      let multiplierSpeed = 1.0;
-
-      if (isMuted || voiceState === 'Ready') {
-        multiplierAmp = 0.05;
-        multiplierFreq = 0.3;
-        multiplierSpeed = 0.2;
-      } else if (voiceState === 'Listening') {
-        // Microphone level powers dynamic active waveform
-        multiplierAmp = 0.35 + audioLevel * 2.5;
-        multiplierFreq = 0.8 + audioLevel * 0.4;
-        multiplierSpeed = 0.9 + audioLevel * 0.5;
-      } else if (voiceState === 'Thinking') {
-        // Gentle mysterious pulsing
-        multiplierAmp = 0.3 + Math.sin(Date.now() / 250) * 0.08;
-        multiplierFreq = 2.0;
-        multiplierSpeed = 1.4;
-      } else if (voiceState === 'Speaking') {
-        // Simulated voice fluctuations
-        const voiceFlux = 0.35 + Math.sin(Date.now() / 140) * 0.35;
-        multiplierAmp = 0.6 + voiceFlux * 2.0;
-        multiplierFreq = 1.1;
-        multiplierSpeed = 1.2;
-      } else if (voiceState === 'Connection Lost') {
-        multiplierAmp = 0.05;
-        multiplierFreq = 0.4;
-        multiplierSpeed = 0.1;
-      }
-
-      waveItems.forEach((wave, idx) => {
-        wave.phase += wave.speed * multiplierSpeed;
-        ctx.beginPath();
-        ctx.lineWidth = idx === 0 ? 3.5 : 2.0;
-
-        if (voiceState === 'Connection Lost') {
-          ctx.strokeStyle = `rgba(239, 68, 68, ${0.4 - idx * 0.1})`;
-          ctx.shadowColor = 'rgba(239, 68, 68, 0.25)';
-        } else {
-          ctx.strokeStyle = wave.color;
-          ctx.shadowColor = wave.color;
-        }
-
-        ctx.shadowBlur = 12;
-        ctx.shadowOffsetX = 0;
-        ctx.shadowOffsetY = 0;
-
-        for (let x = 0; x < dW; x++) {
-          const offsetSine = Math.sin(x * wave.frequency * multiplierFreq + wave.phase);
-          const y = (dH / 2) + offsetSine * wave.amplitude * multiplierAmp;
-          if (x === 0) {
-            ctx.moveTo(x, y);
-          } else {
-            ctx.lineTo(x, y);
-          }
-        }
-        ctx.stroke();
-      });
-
-      ctx.restore();
-      animFrame = requestAnimationFrame(renderLoop);
-    };
-
-    renderLoop();
-
-    return () => {
-      cancelAnimationFrame(animFrame);
-      window.removeEventListener('resize', handleResize);
-    };
-  }, [isOpen, voiceState, audioLevel, isMuted]);
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatHistory, liveUserText, liveAiText]);
 
   if (!isOpen) return null;
 
@@ -638,207 +540,390 @@ export default function PlackLive({
     setIsMuted(nextMuted);
     if (nextMuted) {
       console.log("[MUTED]");
-      setSubtitleText("Microphone muted.");
     } else {
       console.log("[UNMUTED]");
-      setSubtitleText("Listening...");
     }
     if (micStreamRef.current) {
       micStreamRef.current.getAudioTracks().forEach(track => {
         track.enabled = !nextMuted;
       });
     }
+    // Update voice state context
+    if (nextMuted) {
+      setVoiceState('Ready');
+    } else {
+      setVoiceState('Listening');
+    }
+  };
+
+  // Build accumulated message list for the conversation visual scroll area
+  const allMessages = [...(chatHistory || [])];
+
+  const isUserMsgAlreadyInHistory = allMessages.length > 0 && 
+    allMessages[allMessages.length - 1].role === 'user' && 
+    allMessages[allMessages.length - 1].content.trim() === liveUserText.trim();
+
+  if (liveUserText && !isUserMsgAlreadyInHistory) {
+    allMessages.push({ id: 'live-user-temp', role: 'user', content: liveUserText });
+  }
+
+  const isAiMsgAlreadyInHistory = allMessages.length > 0 && 
+    allMessages[allMessages.length - 1].role === 'model' && 
+    allMessages[allMessages.length - 1].content.trim() === liveAiText.trim();
+
+  if (liveAiText && !isAiMsgAlreadyInHistory) {
+    allMessages.push({ id: 'live-ai-temp', role: 'model', content: liveAiText });
+  }
+
+  // Visual Center Orb Redesign
+  const renderCenterOrb = () => {
+    let orbGradientClass = "from-[#0a4bf5] via-[#1e0bf6] to-[#6006f7] shadow-[0_0_50px_rgba(30,11,246,0.6)]";
+    let animateProps: any = {};
+
+    if (voiceState === 'Ready' || voiceState === 'Connection Lost' || isMuted) {
+      orbGradientClass = "from-neutral-800 via-neutral-900 to-neutral-950 shadow-[0_0_30px_rgba(255,255,255,0.05)]";
+      // Idle state: Slow breathing/rotating flow
+      animateProps = {
+        scale: [1, 1.05, 1],
+        rotate: [0, 90, 180, 270, 360],
+        borderRadius: ["50%", "47% 53% 46% 54% / 46% 54% 47% 53%", "50%"]
+      };
+    } else if (voiceState === 'Listening') {
+      orbGradientClass = "from-[#0266f2] via-[#0433ff] to-[#109dec] shadow-[0_0_60px_rgba(4,51,255,0.7)]";
+      // Listening state: Pulse gently
+      animateProps = {
+        scale: [1, 1.08, 1],
+        boxShadow: [
+          "0 0 30px rgba(4,51,255,0.4)",
+          "0 0 60px rgba(4,51,255,0.8)",
+          "0 0 30px rgba(4,51,255,0.4)"
+        ],
+        borderRadius: ["50%", "49% 51% 52% 48% / 48% 52% 49% 51%", "50%"]
+      };
+    } else if (voiceState === 'Thinking') {
+      orbGradientClass = "from-[#6200ff] via-[#b300ff] to-[#ff007f] shadow-[0_0_60px_rgba(179,0,255,0.7)]";
+      // Thinking state: Liquid flow morph animation
+      animateProps = {
+        scale: [1, 1.04, 0.98, 1.03, 1],
+        rotate: [0, 120, 240, 360],
+        borderRadius: [
+          "42% 58% 70% 30% / 45% 45% 55% 55%",
+          "70% 30% 52% 48% / 60% 40% 60% 40%",
+          "30% 70% 40% 60% / 40% 60% 40% 60%",
+          "42% 58% 70% 30% / 45% 45% 55% 55%"
+        ]
+      };
+    } else if (voiceState === 'Speaking') {
+      orbGradientClass = "from-[#00bfff] via-[#0433ff] to-[#7b00ff] shadow-[0_0_70px_rgba(4,51,255,0.8)]";
+      // Speaking state: Expand and contract reactively to actual mic audio volume
+      animateProps = {
+        scale: 1 + audioLevel * 0.7,
+        borderRadius: [
+          "48% 52% 50% 50% / 50% 50% 48% 52%",
+          "52% 48% 48% 52% / 48% 52% 52% 48%",
+          "48% 52% 50% 50% / 50% 50% 48% 52%"
+        ],
+        transition: {
+          borderRadius: { repeat: Infinity, duration: 2.5, ease: "easeInOut" },
+          scale: { type: "spring", stiffness: 350, damping: 15 }
+        }
+      };
+    }
+
+    return (
+      <div className="relative flex items-center justify-center w-28 h-28 md:w-32 md:h-32 select-none pointer-events-auto">
+        {/* Glowing atmospheric waves around the active orb */}
+        {(voiceState === 'Speaking' || voiceState === 'Listening') && !isMuted && (
+          <>
+            <motion.div
+              className="absolute inset-0 rounded-full bg-blue-500/10 blur-xl"
+              animate={{
+                scale: voiceState === 'Speaking' ? [1.1, 1.6 + audioLevel * 0.6, 1.1] : [1.1, 1.35, 1.1]
+              }}
+              transition={{
+                duration: 2.5,
+                repeat: Infinity,
+                ease: "easeInOut"
+              }}
+            />
+            <motion.div
+              className="absolute inset-0 rounded-full bg-purple-500/10 blur-2xl"
+              animate={{
+                scale: voiceState === 'Speaking' ? [1.2, 1.9 + audioLevel * 0.9, 1.2] : [1.2, 1.5, 1.2]
+              }}
+              transition={{
+                duration: 3,
+                repeat: Infinity,
+                ease: "easeInOut"
+              }}
+            />
+          </>
+        )}
+
+        <motion.div
+          onClick={handleToggleMute}
+          className={cn(
+            "w-24 h-24 md:w-28 md:h-28 bg-gradient-to-tr flex items-center justify-center cursor-pointer relative z-10 select-none shadow-2xl",
+            orbGradientClass
+          )}
+          animate={animateProps}
+          transition={
+            voiceState === 'Speaking' 
+              ? animateProps.transition 
+              : {
+                  repeat: Infinity,
+                  duration: voiceState === 'Thinking' ? 6 : 4,
+                  ease: "easeInOut"
+                }
+          }
+        >
+          {/* Metallic 3D light glow highlight */}
+          <div className="absolute top-2.5 left-7 w-8 h-4 rounded-full bg-white/20 blur-[2px] transform -rotate-12 pointer-events-none" />
+          
+          {/* Sparkle micro-indicator to represent intelligence inside thinking/speaking orbs */}
+          {voiceState === 'Thinking' && (
+            <motion.div
+              animate={{ rotate: 360 }}
+              transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
+            >
+              <Sparkles size={24} className="text-white/70" />
+            </motion.div>
+          )}
+
+          {voiceState === 'Connection Lost' && (
+            <AlertCircle size={28} className="text-red-300 animate-pulse" />
+          )}
+        </motion.div>
+      </div>
+    );
   };
 
   return (
     <AnimatePresence>
       <motion.div
-        id="plack-live-dock"
-        initial={{ opacity: 0, y: 120 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: 120 }}
-        transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
-        className={cn(
-          "fixed bottom-0 z-[95] flex flex-col items-center justify-end overflow-hidden select-none pb-8 pt-16 font-sans h-[260px] pointer-events-none",
-          theme === 'light'
-            ? "bg-gradient-to-t from-white via-white/80 to-transparent text-neutral-800"
-            : theme === 'cosmic'
-              ? "bg-gradient-to-t from-[#050114] via-[#050114]/80 to-transparent text-white"
-              : "bg-gradient-to-t from-[#000000] via-[#000000]/80 to-transparent text-white"
-        )}
-        style={{
-          left: isSidebarOpen && !isMobile ? `${sidebarWidth}px` : '0px',
-          right: isSourcesSidebarOpen && !isMobile ? `${sourcesWidth}px` : '0px',
-          transition: 'left 300ms cubic-bezier(0.16, 1, 0.3, 1), right 300ms cubic-bezier(0.16, 1, 0.3, 1)'
-        }}
+        id="plack-live-immersive-overlay"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.35 }}
+        className="fixed inset-0 w-screen h-screen min-h-screen z-[100] flex flex-col bg-[#050505] text-white overflow-hidden font-sans select-none"
       >
-        {/* Soft glowing ambient lighting underneath */}
-        <div className="absolute inset-x-0 bottom-0 top-1/2 z-0 overflow-hidden pointer-events-none opacity-80 backdrop-blur-3xl">
-          <div className="absolute -left-[5%] bottom-[-20%] w-[250px] h-[250px] rounded-full bg-blue-600/20 blur-[60px] mix-blend-screen" />
-          <div className="absolute -right-[5%] bottom-[-20%] w-[250px] h-[250px] rounded-full bg-purple-600/20 blur-[60px] mix-blend-screen" />
+        {/* Subtle, beautiful atmospheric ambient background gradients */}
+        <div className="absolute inset-0 z-0 pointer-events-none">
+          <div className="absolute top-[10%] left-[25%] -translate-x-1/2 -translate-y-1/2 w-[450px] h-[450px] rounded-full bg-blue-900/10 blur-[130px]" />
+          <div className="absolute bottom-[15%] right-[25%] translate-x-1/2 translate-y-1/2 w-[450px] h-[450px] rounded-full bg-indigo-900/10 blur-[130px]" />
+          <div className="absolute top-[50%] left-[50%] -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full bg-violet-950/5 blur-[160px]" />
         </div>
 
-        {/* Display Connection/Permission Errors if present */}
+        {/* Top Header Row */}
+        <header className="relative z-20 h-16 shrink-0 flex items-center justify-between px-6 border-b border-white/5 bg-black/10 backdrop-blur-md">
+          <div className="flex items-center gap-3">
+            <button className="p-2 -ml-2 rounded-full hover:bg-white/5 active:scale-95 transition-all text-neutral-400 hover:text-white pointer-events-auto">
+              <Menu size={20} />
+            </button>
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
+              <span className="text-sm font-semibold tracking-wider text-neutral-200">Plack Live</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* Optional indicators */}
+            {isCameraOn && (
+              <span className="text-[10px] bg-blue-500/15 border border-blue-500/20 px-2 py-0.5 rounded-full text-blue-400 font-bold tracking-wider uppercase">
+                Video On
+              </span>
+            )}
+            <button className="p-2 rounded-full hover:bg-white/5 active:scale-95 transition-all text-neutral-400 hover:text-white pointer-events-auto">
+              <MoreVertical size={20} />
+            </button>
+          </div>
+        </header>
+
+        {/* Display connection errors gracefully if any */}
         {permissionError && (
-          <div className="absolute top-2 left-1/2 -translate-x-1/2 z-[60] flex items-center gap-2 px-3 py-1.5 rounded-full bg-neutral-900/90 border border-red-500/30 text-red-300 text-[11px] backdrop-blur-md shadow-lg pointer-events-auto">
-            <AlertCircle size={14} className="shrink-0 text-red-400" />
-            <span className="truncate">{permissionError}</span>
+          <div className="relative z-30 mx-auto mt-4 flex items-center gap-2.5 px-4 py-2 rounded-full bg-red-950/40 border border-red-500/20 text-red-300 text-xs backdrop-blur-lg shadow-xl animate-bounce">
+            <AlertCircle size={15} className="shrink-0 text-red-400" />
+            <span>{permissionError}</span>
             <button 
               onClick={() => setPermissionError(null)} 
-              className="ml-2 text-[10px] font-bold text-neutral-400 hover:text-white transition-colors"
+              className="ml-2 hover:text-white text-neutral-400"
             >
-              <X size={12} />
+              <X size={14} />
             </button>
           </div>
         )}
 
-        {/* Core Layout Structure */}
-        <div className="relative z-10 w-full max-w-[600px] flex flex-col items-center gap-3 px-6 pb-2 pointer-events-auto">
-          
-          {/* Row 1: Voice State Indicator */}
-          <div className="flex flex-col items-center justify-center select-none shrink-0">
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={isMuted ? "Paused" : voiceState}
-                initial={{ opacity: 0, y: -4 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 4 }}
-                transition={{ duration: 0.3, ease: 'easeOut' }}
-                className={cn(
-                  "flex items-center gap-2 text-[12px] font-medium tracking-[0.1em] uppercase",
-                  isMuted
-                    ? "text-neutral-500"
-                    : voiceState === 'Listening'
-                      ? "text-neutral-300"
-                      : voiceState === 'Thinking'
-                        ? "text-indigo-400"
-                        : voiceState === 'Speaking'
-                          ? "text-blue-400"
-                          : "text-neutral-500"
-                )}
-              >
-                {voiceState === 'Thinking' && (
-                  <span className="w-1.5 h-1.5 shrink-0 rounded-full bg-indigo-500 animate-bounce" />
-                )}
-                <span className={cn(
-                  theme === 'light' && !isMuted ? "text-neutral-600" : ""
-                )}>{isMuted ? "Paused" : voiceState}</span>
-              </motion.div>
-            </AnimatePresence>
-          </div>
+        {/* Conversation Stream Block */}
+        <main className="relative z-10 flex-1 overflow-y-auto px-6 md:px-24 py-6 md:py-10 flex flex-col justify-end select-text scrollbar-thin scrollbar-thumb-neutral-800 scrollbar-track-transparent">
+          {allMessages.length === 0 ? (
+            <div className="h-full flex flex-col items-center justify-center text-center text-neutral-500 px-6 max-w-sm mx-auto">
+              <Radio size={32} className="text-indigo-500/50 mb-3 animate-pulse" />
+              <p className="text-sm font-semibold text-neutral-300 tracking-wide">
+                Voice Connection Active
+              </p>
+              <p className="text-xs text-neutral-500 mt-1 leading-relaxed">
+                Start speaking anytime to talk with Plack AI.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-6 md:space-y-8 max-w-3xl w-full mx-auto pb-4">
+              {allMessages.map((msg, idx) => {
+                const isUser = msg.role === 'user';
+                const isLast = idx === allMessages.length - 1;
+                return (
+                  <motion.div
+                    key={msg.id || `live-msg-${idx}`}
+                    initial={{ opacity: 0, y: 12 }}
+                    animate={{ opacity: isLast ? 1 : 0.45, y: 0 }}
+                    transition={{ duration: 0.35, ease: "easeOut" }}
+                    className={cn(
+                      "flex flex-col space-y-1",
+                      isUser ? "items-end text-right" : "items-start text-left"
+                    )}
+                  >
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-neutral-500">
+                      {isUser ? "You" : "Plack AI"}
+                    </span>
+                    <div
+                      className={cn(
+                        "max-w-[85%] text-lg md:text-xl font-medium leading-relaxed font-sans break-words whitespace-pre-wrap select-text",
+                        isUser ? "text-neutral-200" : "text-white"
+                      )}
+                    >
+                      {msg.content}
+                    </div>
+                  </motion.div>
+                );
+              })}
+              <div ref={messagesEndRef} />
+            </div>
+          )}
+        </main>
 
-          {/* Row 2: Animated Orb */}
-          <div className="w-full h-[100px] flex items-center justify-center relative select-none pointer-events-none my-2">
-            {/* The glowing orb */}
+        {/* Animated Camera / Screen Share Floating Mock Frames */}
+        <AnimatePresence>
+          {isCameraOn && (
             <motion.div
-              className={cn(
-                "rounded-full absolute z-10 flex items-center justify-center shadow-[0_0_40px_rgba(99,102,241,0.6)]",
-                voiceState === 'Speaking' ? "bg-blue-500" : voiceState === 'Listening' ? "bg-indigo-500" : voiceState === 'Thinking' ? "bg-purple-500" : "bg-neutral-600"
-              )}
-              animate={{ 
-                scale: 1 + audioLevel * 0.4,
-                opacity: 0.8 + audioLevel * 0.2
-              }}
-              transition={{ type: "spring", stiffness: 300, damping: 20 }}
-              style={{ width: 64, height: 64 }}
-            />
-            {/* Background ripple rings */}
-            <motion.div
-              className={cn(
-                "rounded-full absolute border-2",
-                voiceState === 'Speaking' ? "border-blue-400" : "border-indigo-400"
-              )}
-              animate={{
-                scale: 1 + audioLevel * 0.8,
-                opacity: Math.max(0, 0.4 - audioLevel)
-              }}
-              transition={{ type: "spring", stiffness: 100, damping: 30 }}
-              style={{ width: 80, height: 80 }}
-            />
-            <motion.div
-              className={cn(
-                "rounded-full absolute border",
-                voiceState === 'Speaking' ? "border-blue-300" : "border-indigo-300"
-              )}
-              animate={{
-                scale: 1 + audioLevel * 1.5,
-                opacity: Math.max(0, 0.2 - audioLevel)
-              }}
-              transition={{ type: "spring", stiffness: 80, damping: 40 }}
-              style={{ width: 100, height: 100 }}
-            />
-            <canvas ref={canvasRef} className="hidden" />
-          </div>
+              initial={{ scale: 0.8, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.8, opacity: 0, y: 20 }}
+              className="absolute bottom-40 right-6 md:right-12 w-32 h-44 rounded-2xl bg-[#0d0d0d] border border-white/10 overflow-hidden shadow-2xl z-30 flex flex-col items-center justify-center select-none"
+            >
+              <div className="absolute top-2 left-2 flex items-center gap-1 bg-black/60 px-1.5 py-0.5 rounded-full text-[9px] font-semibold text-neutral-300">
+                <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                Self
+              </div>
+              <div className="w-10 h-10 rounded-full bg-blue-600/10 flex items-center justify-center border border-blue-500/20">
+                <Video size={18} className="text-blue-400" />
+              </div>
+              <span className="text-[10px] font-semibold text-neutral-400 mt-2">Camera Active</span>
+            </motion.div>
+          )}
 
-          {/* Row 3: Central control keys */}
-          <div className="flex items-center justify-center gap-3 mt-4">
-            
-            {/* Pause Toggle */}
-            <button
-              onClick={handleToggleMute}
+          {isScreenSharing && (
+            <motion.div
+              initial={{ scale: 0.8, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.8, opacity: 0, y: 20 }}
+              className="absolute bottom-40 left-6 md:left-12 w-44 h-28 rounded-2xl bg-[#0d0d0d] border border-white/10 overflow-hidden shadow-2xl z-30 flex flex-col items-center justify-center select-none"
+            >
+              <div className="absolute top-2 left-2 flex items-center gap-1 bg-black/60 px-1.5 py-0.5 rounded-full text-[9px] font-semibold text-neutral-300">
+                <span className="w-1.5 h-1.5 rounded-full bg-cyan-500 animate-pulse" />
+                Presenter
+              </div>
+              <div className="w-10 h-10 rounded-full bg-cyan-600/10 flex items-center justify-center border border-cyan-500/20">
+                <MonitorUp size={18} className="text-cyan-400" />
+              </div>
+              <span className="text-[10px] font-semibold text-neutral-400 mt-2">Screen Share</span>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* State / Activity Indicator text with smooth transition */}
+        <div className="relative z-20 shrink-0 h-8 flex items-center justify-center select-none my-1">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={isMuted ? "Paused" : voiceState}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.2 }}
               className={cn(
-                "flex items-center justify-center w-[46px] h-[46px] rounded-full transition-all duration-300 active:scale-95 cursor-pointer select-none",
+                "text-[12px] font-bold tracking-[0.15em] uppercase flex items-center gap-1.5",
                 isMuted
-                  ? "bg-neutral-800 text-neutral-300 hover:bg-neutral-700"
-                  : theme === 'light'
-                    ? "bg-neutral-200/60 hover:bg-neutral-200 text-neutral-800"
-                    : "bg-white/10 hover:bg-white/15 text-white"
+                  ? "text-neutral-500"
+                  : voiceState === 'Listening'
+                    ? "text-blue-400"
+                    : voiceState === 'Thinking'
+                      ? "text-purple-400"
+                      : voiceState === 'Speaking'
+                        ? "text-indigo-400"
+                        : "text-neutral-500"
               )}
-              title={isMuted ? "Resume" : "Pause"}
             >
-              {isMuted ? <Play size={20} /> : <Pause size={20} />}
+              {voiceState === 'Thinking' && !isMuted && (
+                <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
+              )}
+              {voiceState === 'Listening' && !isMuted && (
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-ping" />
+              )}
+              <span>
+                {isMuted ? "Muted" : voiceState === 'Ready' ? "Ready" : voiceState}
+              </span>
+            </motion.div>
+          </AnimatePresence>
+        </div>
+
+        {/* Bottom Control Bar Row */}
+        <footer className="relative z-20 shrink-0 flex flex-col items-center justify-center pb-8 md:pb-12 pt-4 px-6 bg-gradient-to-t from-black via-black/80 to-transparent">
+          <div className="flex items-center justify-center gap-4 md:gap-8 w-full max-w-xl">
+            
+            {/* Camera Toggle Button */}
+            <button
+              onClick={() => setIsCameraOn(!isCameraOn)}
+              className={cn(
+                "flex items-center justify-center w-12 h-12 md:w-14 md:h-14 rounded-full transition-all duration-300 active:scale-90 border cursor-pointer pointer-events-auto shadow-lg",
+                isCameraOn 
+                  ? "bg-blue-600/25 border-blue-500/35 text-blue-400 hover:bg-blue-600/35"
+                  : "bg-neutral-900 border-white/5 text-neutral-400 hover:text-white hover:bg-neutral-800"
+              )}
+              title={isCameraOn ? "Turn Camera Off" : "Turn Camera On"}
+            >
+              <Video size={20} />
             </button>
 
-            {/* Microphone Toggle */}
+            {/* Screen Share Button */}
             <button
+              onClick={() => setIsScreenSharing(!isScreenSharing)}
               className={cn(
-                "flex items-center justify-center w-[46px] h-[46px] rounded-full transition-all duration-300 active:scale-95 cursor-pointer select-none",
-                theme === 'light'
-                  ? "bg-neutral-200/60 hover:bg-neutral-200 text-neutral-800"
-                  : "bg-white/10 hover:bg-white/15 text-white"
+                "flex items-center justify-center w-12 h-12 md:w-14 md:h-14 rounded-full transition-all duration-300 active:scale-90 border cursor-pointer pointer-events-auto shadow-lg",
+                isScreenSharing 
+                  ? "bg-cyan-600/25 border-cyan-500/35 text-cyan-400 hover:bg-cyan-600/35"
+                  : "bg-neutral-900 border-white/5 text-neutral-400 hover:text-white hover:bg-neutral-800"
               )}
-              title="Microphone"
-            >
-              <Mic size={20} />
-            </button>
-
-            {/* Speaker Toggle */}
-            <button
-              className={cn(
-                "flex items-center justify-center w-[46px] h-[46px] rounded-full transition-all duration-300 active:scale-95 cursor-pointer select-none",
-                theme === 'light'
-                  ? "bg-neutral-200/60 hover:bg-neutral-200 text-neutral-800"
-                  : "bg-white/10 hover:bg-white/15 text-white"
-              )}
-              title="Speaker"
-            >
-              <Volume2 size={20} />
-            </button>
-
-            {/* Share Screen */}
-            <button
-              className={cn(
-                "flex items-center justify-center w-[46px] h-[46px] rounded-full transition-all duration-300 active:scale-95 cursor-pointer select-none",
-                theme === 'light'
-                  ? "bg-neutral-200/60 hover:bg-neutral-200 text-neutral-800"
-                  : "bg-white/10 hover:bg-white/15 text-white"
-              )}
-              title="Share Screen"
+              title={isScreenSharing ? "Stop Sharing Screen" : "Share Screen"}
             >
               <MonitorUp size={20} />
             </button>
 
-            {/* Video Call */}
+            {/* Center Orb (Visual Focus & Mic Mute Toggle) */}
+            <div className="flex items-center justify-center">
+              {renderCenterOrb()}
+            </div>
+
+            {/* Microphone Mute Button */}
             <button
+              onClick={handleToggleMute}
               className={cn(
-                "flex items-center justify-center w-[46px] h-[46px] rounded-full transition-all duration-300 active:scale-95 cursor-pointer select-none",
-                theme === 'light'
-                  ? "bg-neutral-200/60 hover:bg-neutral-200 text-neutral-800"
-                  : "bg-white/10 hover:bg-white/15 text-white"
+                "flex items-center justify-center w-12 h-12 md:w-14 md:h-14 rounded-full transition-all duration-300 active:scale-90 border cursor-pointer pointer-events-auto shadow-lg",
+                isMuted 
+                  ? "bg-red-600/25 border-red-500/35 text-red-400 hover:bg-red-600/35 animate-pulse"
+                  : "bg-neutral-900 border-white/5 text-neutral-400 hover:text-white hover:bg-neutral-800"
               )}
-              title="Video Call"
+              title={isMuted ? "Unmute Microphone" : "Mute Microphone"}
             >
-              <Video size={20} />
+              {isMuted ? <MicOff size={20} /> : <Mic size={20} />}
             </button>
 
             {/* End Session Button */}
@@ -848,14 +933,14 @@ export default function PlackLive({
                 cleanUpSession();
                 onClose();
               }}
-              className="flex items-center justify-center w-[46px] h-[46px] rounded-full bg-red-500 hover:bg-red-600 active:scale-95 text-white transition-all duration-300 shadow-[0_0_20px_rgba(239,68,68,0.3)] cursor-pointer select-none"
+              className="flex items-center justify-center w-12 h-12 md:w-14 md:h-14 rounded-full bg-rose-600 border border-rose-500/20 text-white hover:bg-rose-700 active:scale-90 transition-all duration-300 shadow-[0_0_20px_rgba(239,68,68,0.3)] cursor-pointer pointer-events-auto"
               title="End Voice Session"
             >
               <PhoneOff size={20} fill="currentColor" />
             </button>
 
           </div>
-        </div>
+        </footer>
       </motion.div>
     </AnimatePresence>
   );

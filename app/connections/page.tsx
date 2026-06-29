@@ -42,6 +42,7 @@ export default function ConnectionsPage() {
 
   // Fetch connections status
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchConnections();
   }, [session, supabase]);
 

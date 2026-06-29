@@ -4056,15 +4056,15 @@ export default function Home() {
 
             {/* Fixed Top Header (Dynamically bound to Chat columns width) */}
             <header 
-              className="fixed top-4 h-[60px] z-[110] flex items-center justify-between pointer-events-none transition-all duration-300"
+              className="fixed top-2 sm:top-4 h-[56px] sm:h-[60px] z-[110] flex items-center justify-between pointer-events-none transition-all duration-300"
               style={{
-                left: isSidebarOpen && !isMobile ? `calc(${sidebarWidth}px + 16px)` : '16px',
-                right: isSourcesSidebarOpen && !isMobile ? `calc(${sourcesWidth}px + 16px)` : '16px'
+                left: isSidebarOpen && !isMobile ? `calc(${sidebarWidth}px + 16px)` : (isMobile ? '8px' : '16px'),
+                right: isSourcesSidebarOpen && !isMobile ? `calc(${sourcesWidth}px + 16px)` : (isMobile ? '8px' : '16px')
               }}
             >
             <div 
               className={cn(
-                "flex items-center justify-between w-full h-full px-4 rounded-2xl border backdrop-blur-md shadow-xs pointer-events-auto transition-all duration-300",
+                "flex items-center justify-between w-full h-full px-3 sm:px-4 rounded-xl sm:rounded-2xl border backdrop-blur-md shadow-xs pointer-events-auto transition-all duration-300",
                 theme === 'light'
                   ? "bg-white/40 border-neutral-200/40 text-neutral-800 shadow-[0_2px_8px_rgba(0,0,0,0.02)]"
                   : theme === 'cosmic'
@@ -4265,10 +4265,10 @@ export default function Home() {
 
         {/* Conversation Canvas Area */}
         <div className={cn(
-          "flex-1 w-full mx-auto px-6 select-text overflow-x-hidden relative z-10 flex flex-col justify-between transition-all duration-300 ease-in-out",
+          "flex-1 w-full mx-auto px-4 sm:px-6 md:px-8 select-text overflow-x-hidden relative z-10 flex flex-col justify-between transition-all duration-300 ease-in-out",
           isLiveModeOpen 
-            ? "max-w-[700px] pt-40 pb-[240px]" 
-            : "max-w-[720px] pt-28 pb-36"
+            ? "max-w-[700px] pt-32 sm:pt-40 pb-[200px] sm:pb-[240px]" 
+            : "max-w-[720px] lg:max-w-[800px] xl:max-w-[840px] pt-24 sm:pt-28 pb-32 sm:pb-36"
         )}>
           
           {/* Temporary Chat Info Banner */}
@@ -4337,7 +4337,7 @@ export default function Home() {
 
           {messages.length > 0 && (
             /* Message Stream */
-            <div className={cn("transition-all duration-300", isLiveModeOpen ? "space-y-16" : "space-y-12")}>
+            <div className={cn("transition-all duration-300", isLiveModeOpen ? "space-y-12 sm:space-y-16" : "space-y-10 sm:space-y-12")}>
               {messages.map((message) => {
                 const isUser = message.role === 'user';
                 
@@ -4346,48 +4346,48 @@ export default function Home() {
                     key={message.id} 
                     id={`msg-${message.id}`}
                     className={cn(
-                      "flex flex-col space-y-4 animate-fade-in",
+                      "flex flex-col space-y-3 sm:space-y-4 animate-fade-in",
                       isUser ? "items-end" : "items-start",
                       message.role === 'system' && "w-full items-center"
                     )}
                   >
                     {message.role === 'system' ? (
-                      <div className="w-full flex justify-center my-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                      <div className="w-full flex justify-center my-3 sm:my-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
                         <div className={cn(
-                          "max-w-2xl w-full p-6 py-4 rounded-2xl border backdrop-blur-md shadow-sm flex flex-col gap-1 items-center text-center",
+                          "max-w-2xl w-full p-4 sm:p-6 py-3 sm:py-4 rounded-xl sm:rounded-2xl border backdrop-blur-md shadow-sm flex flex-col gap-1 items-center text-center",
                           theme === 'light' 
                             ? "bg-white/80 border-neutral-200/60 text-neutral-600 shadow-neutral-100/50 shadow-lg" 
                             : "bg-neutral-900/60 border-neutral-800 text-neutral-400 shadow-black/20 shadow-xl"
                         )}>
                           <div className={cn(
-                            "w-8 h-8 rounded-full flex items-center justify-center mb-1",
+                            "w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center mb-1",
                             theme === 'light' ? "bg-neutral-50 text-neutral-400" : "bg-neutral-800 text-neutral-500"
                           )}>
-                            <Orbit size={18} />
+                            <Orbit size={16} className="sm:w-[18px] sm:h-[18px]" />
                           </div>
-                          <span className={cn("text-[10px] uppercase tracking-[0.25em] font-bold mb-1 opacity-80", theme === 'light' ? "text-neutral-400" : "text-neutral-500")}>
+                          <span className={cn("text-[9px] sm:text-[10px] uppercase tracking-[0.25em] font-bold mb-1 opacity-80", theme === 'light' ? "text-neutral-400" : "text-neutral-500")}>
                             System Message
                           </span>
-                          <div className="w-12 h-[1px] bg-neutral-200/50 dark:bg-neutral-800/20 mb-2" />
-                          <p className={cn("text-[14.5px] leading-relaxed font-sans font-medium px-4", theme === 'light' ? "text-neutral-600" : "text-neutral-300")}>
+                          <div className="w-10 sm:w-12 h-[1px] bg-neutral-200/50 dark:bg-neutral-800/20 mb-2" />
+                          <p className={cn("text-[13.5px] sm:text-[14.5px] leading-relaxed font-sans font-medium px-2 sm:px-4", theme === 'light' ? "text-neutral-600" : "text-neutral-300")}>
                             {message.content}
                           </p>
                         </div>
                       </div>
                     ) : isUser ? (
-                      <div className="flex flex-col items-end space-y-2 max-w-[85%] select-text">
+                      <div className="flex flex-col items-end space-y-1.5 sm:space-y-2 max-w-[90%] sm:max-w-[85%] select-text">
                         {/* Attachments inside User message */}
                         {message.attachments && message.attachments.length > 0 && (
-                          <div className="flex flex-wrap gap-2 mb-1 justify-end select-none">
+                          <div className="flex flex-wrap gap-1.5 sm:gap-2 mb-1 justify-end select-none">
                             {message.attachments.map((att: Attachment, i: number) => {
                               const isImg = att.type.startsWith('image/');
                               return (
                                 <div 
                                   key={att.id || `msg-${message.id}-att-${i}`}
-                                  className="flex items-center gap-2 border border-slate-100/80 bg-white/90 rounded-xl p-1.5 pl-2.5 pr-3 shadow-xs"
+                                  className="flex items-center gap-1.5 sm:gap-2 border border-slate-100/80 bg-white/90 rounded-lg sm:rounded-xl p-1 sm:p-1.5 pl-2 sm:pl-2.5 pr-2 sm:pr-3 shadow-xs"
                                 >
                                   {isImg ? (
-                                    <div className="relative w-6 h-6 rounded-md overflow-hidden bg-slate-50 border border-slate-100 flex-shrink-0">
+                                    <div className="relative w-5 h-5 sm:w-6 sm:h-6 rounded-md overflow-hidden bg-slate-50 border border-slate-100 flex-shrink-0">
                                       <img 
                                         src={att.publicUrl ? att.publicUrl : `data:${att.type};base64,${att.data}`} 
                                         alt={att.name}
@@ -4396,11 +4396,11 @@ export default function Home() {
                                       />
                                     </div>
                                   ) : (
-                                    <div className="relative w-6 h-6 rounded-md bg-slate-50 border border-slate-100 flex-shrink-0 flex items-center justify-center">
-                                      <FileCode size={13} className="text-slate-400 flex-shrink-0" />
+                                    <div className="relative w-5 h-5 sm:w-6 sm:h-6 rounded-md bg-slate-50 border border-slate-100 flex-shrink-0 flex items-center justify-center">
+                                      <FileCode size={12} className="text-slate-400 flex-shrink-0" />
                                     </div>
                                   )}
-                                  <span className="text-[11px] font-sans text-slate-500 truncate max-w-[124px]">{att.name}</span>
+                                  <span className="text-[10px] sm:text-[11px] font-sans text-slate-500 truncate max-w-[100px] sm:max-w-[124px]">{att.name}</span>
                                 </div>
                               );
                             })}
@@ -4411,14 +4411,14 @@ export default function Home() {
                         {message.content && (
                           editingMessageId === message.id ? (
                             <div className={cn(
-                              "relative w-full max-w-full md:w-[480px] flex flex-col p-3 rounded-2xl border shadow-sm animate-in fade-in zoom-in-95 duration-200 z-10",
+                              "relative w-full max-w-full md:w-[480px] flex flex-col p-2.5 sm:p-3 rounded-xl sm:rounded-2xl border shadow-sm animate-in fade-in zoom-in-95 duration-200 z-10",
                               theme === 'light' ? "bg-white border-neutral-200" : "bg-neutral-900 border-neutral-800"
                             )}>
                               <textarea
                                 value={editContent}
                                 onChange={(e) => setEditContent(e.target.value)}
                                 className={cn(
-                                  "w-full resize-none outline-none text-[14.5px] bg-transparent p-2 min-h-[80px] font-sans",
+                                  "w-full resize-none outline-none text-[13.5px] sm:text-[14.5px] bg-transparent p-2 min-h-[80px] font-sans",
                                   theme === 'light' ? "text-neutral-800" : "text-white"
                                 )}
                                 autoFocus
@@ -4426,13 +4426,13 @@ export default function Home() {
                               <div className="flex justify-end gap-2 mt-2 pt-2 border-t border-neutral-200/50 dark:border-neutral-800/50">
                                 <button
                                   onClick={() => setEditingMessageId(null)}
-                                  className="px-3.5 py-1.5 text-[12px] font-medium text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors cursor-pointer"
+                                  className="px-3 py-1.5 text-[11px] sm:text-[12px] font-medium text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors cursor-pointer"
                                 >
                                   Cancel
                                 </button>
                                 <button
                                   onClick={() => handleEditMessageSave(message.id, editContent)}
-                                  className="px-3.5 py-1.5 text-[12px] font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors cursor-pointer"
+                                  className="px-3 py-1.5 text-[11px] sm:text-[12px] font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors cursor-pointer"
                                 >
                                   Save & Send
                                 </button>
@@ -4448,26 +4448,26 @@ export default function Home() {
                                   setEditContent(message.content);
                                 }}
                                 className={cn(
-                                  "p-2 rounded-full transition-colors cursor-pointer active:scale-95",
+                                  "p-1.5 sm:p-2 rounded-full transition-colors cursor-pointer active:scale-95",
                                   theme === 'light' ? "hover:bg-neutral-100 text-neutral-400 hover:text-neutral-700" : "hover:bg-neutral-800 text-neutral-500 hover:text-neutral-200"
                                 )}
                                 title="Edit Message"
                               >
-                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
                               </button>
                               <button
                                 onClick={() => handleCopyMessage(message.content)}
                                 className={cn(
-                                  "p-2 rounded-full transition-colors cursor-pointer active:scale-95",
+                                  "p-1.5 sm:p-2 rounded-full transition-colors cursor-pointer active:scale-95",
                                   theme === 'light' ? "hover:bg-neutral-100 text-neutral-400 hover:text-neutral-700" : "hover:bg-neutral-800 text-neutral-500 hover:text-neutral-200"
                                 )}
                                 title="Copy Message"
                               >
-                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
                               </button>
                             </div>
 
-                            <div className="rounded-[24px] rounded-tr-[4px] px-5 py-3 text-[14.5px] leading-relaxed text-left select-text font-sans border max-w-full accent-bg accent-border shadow-md">
+                            <div className="rounded-[20px] sm:rounded-[24px] rounded-tr-[4px] px-4 sm:px-5 py-2.5 sm:py-3 text-[13.5px] sm:text-[14.5px] leading-relaxed text-left select-text font-sans border max-w-full accent-bg accent-border shadow-md">
                               {message.content}
                             </div>
                           </div>
@@ -4477,11 +4477,11 @@ export default function Home() {
                     ) : (
                       /* Assistant Typography Direct layout (No visible bubble container) */
                        <div className={cn(
-                        "w-full space-y-4 select-text",
+                        "w-full space-y-3 sm:space-y-4 select-text",
                         message.isDeepResearch && (
                           theme === 'light'
-                            ? "bg-[#faf9f6]/90 border border-neutral-200/60 p-6 rounded-[28px] shadow-xs"
-                            : "bg-[#09090b]/90 border border-purple-500/[0.08] p-6 rounded-[28px] shadow-[0_4px_30px_rgba(0,0,0,0.4)] relative overflow-hidden"
+                            ? "bg-[#faf9f6]/90 border border-neutral-200/60 p-4 sm:p-6 rounded-[24px] sm:rounded-[28px] shadow-xs"
+                            : "bg-[#09090b]/90 border border-purple-500/[0.08] p-4 sm:p-6 rounded-[24px] sm:rounded-[28px] shadow-[0_4px_30px_rgba(0,0,0,0.4)] relative overflow-hidden"
                         )
                       )}>
                         {message.memorySaved && (
@@ -5643,12 +5643,12 @@ export default function Home() {
                   <motion.div
                     initial={false}
                     animate={{
-                      borderRadius: isTyped ? "26px" : "0px 26px 26px 0px",
+                      borderRadius: isTyped ? (isMobile ? "20px" : "26px") : (isMobile ? "0px 20px 20px 0px" : "0px 26px 26px 0px"),
                       borderLeftColor: isTyped ? borderThemeColor : "rgba(0,0,0,0)",
                     }}
                     transition={{ type: "spring", stiffness: 400, damping: 30, bounce: 0.1 }}
                     className={cn(
-                      "flex-1 flex items-end gap-2 px-3 py-2 border backdrop-blur-3xl min-h-[52px] relative z-10 self-end mb-1",
+                      "flex-1 flex items-end gap-1 sm:gap-2 px-2 py-1.5 sm:px-3 sm:py-2 border backdrop-blur-3xl min-h-[46px] sm:min-h-[52px] md:min-h-[56px] lg:min-h-[60px] relative z-10 self-end mb-1",
                       theme === 'light'
                         ? "bg-white border-neutral-200 shadow-[0_2px_14px_rgba(0,0,0,0.04)]"
                         : theme === 'cosmic'
@@ -5670,7 +5670,7 @@ export default function Home() {
                       placeholder={isListening ? "Listening... Speak now." : "Message Plack..."}
                       rows={1}
                       className={cn(
-                        "flex-1 bg-transparent border-none focus:outline-none focus:ring-0 text-[16px] py-[6px] resize-none min-h-[24px] max-h-[120px] overflow-y-auto select-text leading-[24px] font-sans my-auto align-middle transition-all duration-200 word-break-break-word whitespace-pre-wrap overflow-wrap-anywhere",
+                        "flex-1 bg-transparent border-none focus:outline-none focus:ring-0 text-[15px] sm:text-[16px] py-[6px] resize-none min-h-[24px] max-h-[120px] md:max-h-[200px] overflow-y-auto select-text leading-[22px] sm:leading-[24px] font-sans my-auto align-middle transition-all duration-200 word-break-break-word whitespace-pre-wrap overflow-wrap-anywhere",
                         theme === 'light' 
                           ? "text-neutral-900 placeholder-neutral-400/80 caret-neutral-900" 
                           : "text-white placeholder-neutral-500/80 caret-white",
