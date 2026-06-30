@@ -1192,6 +1192,151 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, chats]);
 
+  const updateGlobalAndCachedMessages = (
+    chatId: string,
+    messagesUpdater: (prev: Message[]) => Message[],
+    streamStatus: boolean
+  ) => {
+    if (activeChatIdRef.current === chatId) {
+      logAndSetMessages(messagesUpdater);
+      setIsStreaming(streamStatus);
+    }
+
+    setActiveStreams(prev => {
+      const currentMsgs = prev[chatId]?.messages ?? [];
+      return {
+        ...prev,
+        [chatId]: {
+          isStreaming: streamStatus,
+          messages: messagesUpdater(currentMsgs),
+          abortController: streamStatus ? (abortControllersRef.current[chatId] || null) : null
+        }
+      };
+    });
+  };
+
+  const resumeBackgroundJobStream = async (chatId: string, jobId: string, messageId: string, userPrompt: string) => {
+    console.info("[RESUME_JOB]", { chatId, jobId, messageId });
+    const controller = new AbortController();
+    abortControllersRef.current[chatId] = controller;
+    
+    updateGlobalAndCachedMessages(chatId, (prev) => {
+      const existingIdx = prev.findIndex(m => m.id === messageId);
+      if (existingIdx !== -1) {
+        return prev.map((m, idx) => idx === existingIdx ? { ...m, isStreaming: true } : m);
+      } else {
+        return [...prev, { id: messageId, role: 'model', content: '', isStreaming: true }];
+      }
+    }, true);
+
+    try {
+      const res = await fetch(`/api/chat/stream?jobId=${jobId}`, {
+        signal: controller.signal
+      });
+
+      if (!res.ok) {
+        throw new Error(`Failed to resume stream: status ${res.status}`);
+      }
+
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      if (!reader) throw new Error("No response reader");
+
+      let thoughts = "";
+      let outputText = "";
+      let parsedMetadata: any = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          if (line.startsWith('data: ')) {
+            const dataStr = line.substring(6);
+            if (dataStr === '[DONE]') {
+              break;
+            }
+            try {
+              const parsed = JSON.parse(dataStr);
+              if (parsed.status === 'processing' || parsed.status === 'completed') {
+                if (parsed.partial_output !== undefined) {
+                  outputText = parsed.partial_output;
+                }
+                if (parsed.thoughts !== undefined) {
+                  thoughts = parsed.thoughts;
+                }
+                if (parsed.metadata) {
+                  parsedMetadata = parsed.metadata;
+                }
+
+                updateGlobalAndCachedMessages(chatId, (prev) => {
+                  return prev.map(m => m.id === messageId ? {
+                    ...m,
+                    content: outputText,
+                    reasoning: thoughts || undefined,
+                    isStreaming: parsed.status !== 'completed',
+                    metadata: parsedMetadata || undefined
+                  } : m);
+                }, parsed.status !== 'completed');
+
+                if (parsed.status === 'completed') {
+                  const finalResultText = outputText;
+                  try {
+                    const parsedDocFinal = extractDocumentBlock(finalResultText);
+                    if (parsedDocFinal.hasDocument) {
+                      const finalDocToSave: DocumentRecord = {
+                        id: crypto.randomUUID(),
+                        user_id: session?.user?.id || 'anonymous',
+                        chat_id: chatId,
+                        title: parsedDocFinal.title,
+                        content: parsedDocFinal.content,
+                        version_snapshots: [{ version: 1, title: parsedDocFinal.title, content: parsedDocFinal.content, timestamp: new Date().toISOString() }],
+                        metadata: { version: 1 }
+                      };
+                      
+                      const savedDoc = await createDocument(finalDocToSave.user_id, finalDocToSave.chat_id, finalDocToSave.title, finalDocToSave.content);
+                      console.log("[DOCUMENT CREATED ON RESUME]", { id: savedDoc.id, title: savedDoc.title });
+                      const finalSavedText = finalResultText.replace('<document ', `<document id="${savedDoc.id}" `);
+
+                      updateGlobalAndCachedMessages(chatId, prev => prev.map((m: Message) => {
+                        if (m.id === messageId) {
+                          return {
+                            ...m,
+                            content: finalSavedText
+                          };
+                        }
+                        return m;
+                      }), false);
+                    }
+                  } catch (docErr) {
+                    console.error("Failed extracting document on resume", docErr);
+                  }
+                }
+              }
+            } catch (jsonErr) {
+              // Ignore partial lines
+            }
+          }
+        }
+      }
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        console.info("Resumed stream aborted by user");
+      } else {
+        console.error("Error in resumed background stream:", err);
+      }
+    } finally {
+      abortControllersRef.current[chatId] = null;
+      updateGlobalAndCachedMessages(chatId, (prev) => {
+        return prev.map(m => m.id === messageId ? { ...m, isStreaming: false } : m);
+      }, false);
+    }
+  };
+
   const selectChat = async (idOrSlug: string) => {
     const id = extractChatId(idOrSlug);
     if (!id) return;
@@ -1330,6 +1475,20 @@ export default function Home() {
           abortController: null
         }
       }));
+
+      // Check if there are any active background jobs for this chat to resume
+      try {
+        const jobsRes = await fetch(`/api/chat/active-jobs?chatId=${id}`);
+        if (jobsRes.ok) {
+          const { jobs } = await jobsRes.json();
+          if (jobs && jobs.length > 0) {
+            const activeJob = jobs[0];
+            resumeBackgroundJobStream(id, activeJob.jobId, activeJob.messageId, activeJob.prompt);
+          }
+        }
+      } catch (jobErr) {
+        console.error("Failed to check active background jobs", jobErr);
+      }
     } catch (e) {
       logger.logError(LogCategory.DATABASE, "Failed to load chat messages", e);
     }
@@ -1697,14 +1856,46 @@ export default function Home() {
     }
   };
 
-  const showToast = (msg: string) => {
+  const showToast = (msg: string, duration = 3000) => {
     setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3000);
+    setTimeout(() => setToastMessage(null), duration);
   };
 
   const handleCopyMessage = (content: string) => {
-    navigator.clipboard.writeText(content);
-    showToast("Message copied to clipboard");
+    const fallbackCopy = (text: string) => {
+      try {
+        const textArea = document.createElement("textarea");
+        textArea.value = text;
+        textArea.style.position = "fixed";
+        textArea.style.opacity = "0";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        const successful = document.execCommand('copy');
+        document.body.removeChild(textArea);
+        if (successful) {
+          showToast("Copied", 2000);
+        } else {
+          showToast("Failed to copy", 2000);
+        }
+      } catch (err) {
+        console.error("Fallback copy failed", err);
+        showToast("Failed to copy", 2000);
+      }
+    };
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(content)
+        .then(() => {
+          showToast("Copied", 2000);
+        })
+        .catch((err) => {
+          console.error("Clipboard API failed, trying fallback", err);
+          fallbackCopy(content);
+        });
+    } else {
+      fallbackCopy(content);
+    }
   };
 
   const handleFeedback = async (msgId: string, type: 'like' | 'dislike') => {

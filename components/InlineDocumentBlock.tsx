@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
-  FileText, Copy, Edit3, Check, Sparkles, Send, X, RotateCcw,
+  FileText, Copy, Edit3, Check, Sparkles, Send, X, RotateCcw, RotateCw,
   CheckCircle2, Trash2, StopCircle, 
   ChevronDown, Save, Trash, Info
 } from 'lucide-react';
@@ -266,6 +266,30 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
       debouncedSaveRef.current(editedTitle, activeDocument, userId, actualDocId);
     }
   }, [activeDocument, editedTitle, isEditing, userId, actualDocId]);
+
+  // Debounced checkpoint generator for manual typing undo/redo
+  const debouncedCheckpointRef = useRef<any>(null);
+
+  useEffect(() => {
+    debouncedCheckpointRef.current = debounce((content: string) => {
+      setCheckpoints(prev => {
+        if (prev[currentCheckpointIndex] === content) return prev;
+        const nextCheckpoints = [...prev.slice(0, currentCheckpointIndex + 1), content];
+        setCurrentCheckpointIndex(nextCheckpoints.length - 1);
+        return nextCheckpoints;
+      });
+    }, 1500);
+
+    return () => {
+      if (debouncedCheckpointRef.current) debouncedCheckpointRef.current.cancel();
+    };
+  }, [currentCheckpointIndex]);
+
+  useEffect(() => {
+    if (isEditing && debouncedCheckpointRef.current) {
+      debouncedCheckpointRef.current(activeDocument);
+    }
+  }, [activeDocument, isEditing]);
 
   // --- Handlers: Document Actions ---
 
@@ -632,15 +656,14 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
                         className={cn("w-full text-3xl sm:text-5xl font-black tracking-tighter px-0 bg-transparent border-none outline-none focus:ring-0 placeholder:opacity-20", theme === 'light' ? "text-neutral-900" : "text-white")} 
                         placeholder="Document Title" 
                       />
-                      <UncontrolledEditor
-                        key={`${actualDocId}-${currentCheckpointIndex}`}
-                        editorRef={editorRef} 
-                        initialHtml={activeDocument}
-                        onChange={setActiveDocument}
-                        theme={theme}
+                      <textarea
+                        ref={editorRef as any}
+                        value={activeDocument}
+                        onChange={(e) => setActiveDocument(e.target.value)}
+                        placeholder="Start typing your elegant document body..."
                         className={cn(
-                          "w-full min-h-[500px] sm:min-h-[700px] font-mono text-[15px] sm:text-[17px] leading-[1.6] sm:leading-[1.8] px-0 py-2 sm:py-4 bg-transparent border-none outline-none focus:ring-0 whitespace-pre-wrap transition-opacity duration-300", 
-                          theme === 'light' ? "text-neutral-700" : "text-neutral-300"
+                          "w-full min-h-[500px] sm:min-h-[700px] font-mono text-[15px] sm:text-[17px] leading-[1.6] sm:leading-[1.8] px-0 py-2 sm:py-4 bg-transparent border-none outline-none focus:ring-0 whitespace-pre-wrap transition-opacity duration-300 resize-none focus:ring-transparent focus:border-transparent focus:ring-offset-0 select-text cursor-text", 
+                          theme === 'light' ? "text-neutral-700 placeholder-neutral-400" : "text-neutral-300 placeholder-neutral-600"
                         )} 
                       />
                     </div>
@@ -687,6 +710,24 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
                       title="Undo"
                     >
                       <RotateCcw size={18} />
+                    </button>
+                    <button 
+                      onClick={() => {
+                        if (currentCheckpointIndex < checkpoints.length - 1) {
+                          const nextIdx = currentCheckpointIndex + 1;
+                          setCurrentCheckpointIndex(nextIdx);
+                          setActiveDocument(checkpoints[nextIdx]);
+                        }
+                      }}
+                      disabled={currentCheckpointIndex === checkpoints.length - 1}
+                      className={cn(
+                        "p-3 rounded-2xl transition-all active:scale-90 shrink-0 cursor-pointer",
+                        theme === 'light' ? "bg-neutral-100 text-neutral-600" : "bg-neutral-800 text-neutral-400",
+                        currentCheckpointIndex === checkpoints.length - 1 && "opacity-30 cursor-not-allowed"
+                      )}
+                      title="Redo"
+                    >
+                      <RotateCw size={18} />
                     </button>
                     <form onSubmit={handleAskChanges} className="relative flex-1">
                       <input 

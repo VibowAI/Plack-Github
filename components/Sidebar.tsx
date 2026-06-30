@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence, useSpring, useTransform, useMotionValue } from 'motion/react';
 import { createClient } from '@/lib/supabase/client';
+import { useAppContext } from '@/context/AppContext';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { 
@@ -307,8 +308,8 @@ export default function Sidebar({
   const [visibleCount, setVisibleCount] = useState(15);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
 
-  const supabase = createClient();
-
+  const { supabase } = useAppContext();
+  
   // Mobile triggering logic...
 
   const handleMobileTouchStart = (e: React.TouchEvent, startFromOpen: boolean) => {

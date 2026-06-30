@@ -46,6 +46,7 @@ interface AppContextType {
   isStreaming: boolean;
   setIsStreaming: React.Dispatch<React.SetStateAction<boolean>>;
   refreshChats: () => Promise<void>;
+  supabase: any;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -74,7 +75,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [activeStreams, setActiveStreams] = useState<Record<string, any>>({});
   const [isStreaming, setIsStreaming] = useState(false);
 
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
   // Auth initialization and Sync metadata
   useEffect(() => {
@@ -151,7 +152,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       clearTimeout(timer);
       subscription.unsubscribe();
     };
-  }, [supabase.auth]);
+  }, [supabase]);
 
   const setAccentColor = async (color: AccentColor, customValue?: string) => {
     setAccentColorState(color);
@@ -405,7 +406,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setActiveStreams,
       isStreaming,
       setIsStreaming,
-      refreshChats
+      refreshChats,
+      supabase
     }}>
       <style dangerouslySetInnerHTML={{ __html: `
         :root {
