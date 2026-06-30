@@ -556,7 +556,7 @@ export default function Home() {
     }
   };
 
-  const fetchWebSearchUsage = async () => {
+  const fetchWebSearchUsage = useCallback(async () => {
     if (!session?.user?.id) return;
     try {
       const supabase = createClient();
@@ -577,7 +577,7 @@ export default function Home() {
     } catch (error) {
       logger.logError(LogCategory.DATABASE, 'Failed to fetch web search usage', error);
     }
-  };
+  }, [session?.user?.id, setWebSearchRemaining]);
 
   const getMessageSourcesList = (msg: Message) => {
     const list: any[] = [];
@@ -701,7 +701,7 @@ export default function Home() {
         fetchMemoryData();
       }
     }
-  }, [session?.user?.id, isSettingsOpen, isMemoryPickerOpen, isMemoryManagerOpen, fetchMemoryData]);
+  }, [session?.user?.id, isSettingsOpen, isMemoryPickerOpen, isMemoryManagerOpen, fetchMemoryData, fetchWebSearchUsage]);
 
   // Supabase Realtime Subscription for Memories
   useEffect(() => {
@@ -925,7 +925,7 @@ export default function Home() {
         setActiveModel(savedModel);
       }
     }
-  }, [session?.user?.id]);
+  }, [session?.user?.id, activeModel, session?.user?.user_metadata?.preferred_model]);
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
   const [isAttachmentMenuOpen, setIsAttachmentMenuOpen] = useState(false);
   const [isMentionMenuOpen, setIsMentionMenuOpen] = useState(false);
@@ -1033,7 +1033,7 @@ export default function Home() {
       setInputValue('');
       setAttachments([]);
     }
-  }, [activeChatId, isTemporaryChat]);
+  }, [activeChatId, isTemporaryChat, setAttachments, setInputValue, attachments, activeModel, inputValue]);
 
   useEffect(() => {
     const handleImmediateSave = () => {
@@ -1074,7 +1074,7 @@ export default function Home() {
       window.removeEventListener('blur', handleImmediateSave);
       document.removeEventListener('visibilitychange', handleImmediateSave);
     };
-  }, [inputValue, attachments, activeModel, activeChatId, isTemporaryChat]);
+  }, [inputValue, attachments, activeModel, activeChatId, isTemporaryChat, setAttachments, setInputValue]);
 
 
 
@@ -1449,7 +1449,7 @@ export default function Home() {
         recognitionRef.current = rec;
       }
     }
-  }, []);
+  }, [setInputValue]);
 
   const toggleListening = () => {
     if (!recognitionRef.current) {
@@ -1506,7 +1506,7 @@ export default function Home() {
         setIsSidebarOpen(true);
       }
     }
-  }, [isLiveModeOpen]);
+  }, [isLiveModeOpen, isSidebarOpen, setIsSidebarOpen, setIsSourcesSidebarOpen]);
 
   // Handle auto-growing textarea
   useEffect(() => {

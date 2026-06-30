@@ -1,68 +1,58 @@
 'use client';
 
-import React, { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-
-declare global {
-  interface Window {
-    eruda: any;
-  }
-}
+import { useEffect, useState } from 'react';
 
 export default function DebugPage() {
-  const router = useRouter();
+  const [debugInfo, setDebugInfo] = useState<any>(null);
 
   useEffect(() => {
-    let script: HTMLScriptElement;
-    
-    // Load eruda dynamically to avoid affecting production global scope
-    if (!window.eruda) {
-      script = document.createElement('script');
-      script.src = 'https://cdn.jsdelivr.net/npm/eruda';
-      script.async = true;
-      script.onload = () => {
-        if (window.eruda) {
-          window.eruda.init({
-            defaults: {
-              displaySize: 50,
-              transparency: 1,
-              theme: 'Dark'
-            }
-          });
-          window.eruda.show('console');
-        }
-      };
-      document.body.appendChild(script);
-    } else {
-      window.eruda.init();
-      window.eruda.show('console');
-    }
+    // Lazy-load and initialize Eruda
+    import('eruda').then(({ default: eruda }) => {
+      if (!eruda._isInit) {
+        eruda.init();
+      }
+      eruda.show('console');
+    });
+
+    setDebugInfo({
+      version: '0.1.0',
+      env: process.env.NODE_ENV,
+      url: window.location.href,
+      userAgent: navigator.userAgent,
+      screen: `${window.innerWidth} x ${window.innerHeight}`,
+      online: navigator.onLine ? 'Online' : 'Offline',
+    });
 
     return () => {
-      // Cleanup eruda when leaving debug page
-      if (window.eruda) {
-        window.eruda.destroy();
-      }
-      if (script && document.body.contains(script)) {
-        document.body.removeChild(script);
-      }
+      // We don't destroy Eruda here as it handles itself well, 
+      // but if needed to strictly remove it:
+      // import('eruda').then(({ default: eruda }) => eruda.destroy());
     };
   }, []);
 
+  if (!debugInfo) return null;
+
   return (
-    <div className="min-h-screen bg-[#020204] text-neutral-100 p-8 font-sans">
-      <div className="max-w-xl">
-        <h1 className="text-2xl font-bold mb-4">Developer Debug Environment</h1>
-        <p className="text-neutral-400 mb-6">
-          Eruda has been dynamically injected into this page. It will be removed automatically when you leave.
-        </p>
-        <button
-          onClick={() => router.push('/')}
-          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg font-medium transition-colors"
-        >
-          Return to Workspace
-        </button>
+    <div className="p-8 font-mono min-h-screen bg-neutral-50 dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100">
+      <h1 className="text-2xl font-bold mb-6">Plack AI Debug Environment</h1>
+      <div className="bg-white dark:bg-neutral-800 p-6 rounded-xl shadow-sm border border-neutral-200 dark:border-neutral-700">
+        <h2 className="text-lg font-semibold mb-4">System Information</h2>
+        <ul className="space-y-3">
+          {Object.entries(debugInfo).map(([key, value]) => (
+            <li key={key} className="flex gap-4">
+              <span className="font-bold text-neutral-500 dark:text-neutral-400 w-32 capitalize">
+                {key}:
+              </span>
+              <span className="text-neutral-900 dark:text-neutral-100">
+                {String(value)}
+              </span>
+            </li>
+          ))}
+        </ul>
       </div>
+      <p className="mt-8 text-sm text-neutral-500 dark:text-neutral-400">
+        Eruda console is initialized and active. Check the floating button to inspect logs, network, and errors.
+      </p>
     </div>
   );
 }
