@@ -57,6 +57,8 @@ import {
   CheckCircle2,
   Radio,
   Video,
+  Brain,
+  CheckSquare,
   AudioLines,
   MoreHorizontal,
   ChevronLeft
@@ -224,29 +226,44 @@ interface ExtractedZoomAction {
 function extractZoomAction(fullText: string): ExtractedZoomAction {
   if (!fullText) return { hasAction: false, cleanText: '' };
   
-  const zoomRegex = /\[ZOOM_(CONFIRM_REQUIRED|ACTION):(\w+):({.*?})\]/i;
-  const match = fullText.match(zoomRegex);
+  // Try square bracket format: [ZOOM_ACTION:type:json]
+  const squareRegex = /\[ZOOM_(CONFIRM_REQUIRED|ACTION):(\w+):({.*?})\]/i;
+  const squareMatch = fullText.match(squareRegex);
   
-  if (!match) {
-    return { hasAction: false, cleanText: fullText };
+  if (squareMatch) {
+    const type = squareMatch[2] as any;
+    let params = {};
+    try {
+      params = JSON.parse(squareMatch[3]);
+    } catch (e) {
+      console.error("Failed to parse Zoom action JSON", e);
+    }
+    const cleanText = fullText.replace(/\[ZOOM_(CONFIRM_REQUIRED|ACTION):[\s\S]*?\]/gi, '').trim();
+    return { hasAction: true, type, params, cleanText };
   }
 
-  const type = match[2] as any;
-  let params = {};
-  try {
-    params = JSON.parse(match[3]);
-  } catch (e) {
-    console.error("Failed to parse Zoom action JSON", e);
+  // Try XML-style format: <zoom_action type="..." data='...' />
+  const xmlRegex = /<zoom_action\s+type=["'](\w+)["'](?:\s+data|params)=["']([\s\S]*?)["']\s*\/?>/i;
+  const xmlMatch = fullText.match(xmlRegex);
+
+  if (xmlMatch) {
+    const type = xmlMatch[1] as any;
+    let params = {};
+    try {
+      params = JSON.parse(xmlMatch[2]);
+    } catch (e) {
+      // Try unescaping single quotes if it was data='...'
+      try {
+        params = JSON.parse(xmlMatch[2].replace(/'/g, '"'));
+      } catch (e2) {
+        console.error("Failed to parse XML Zoom action JSON", e2);
+      }
+    }
+    const cleanText = fullText.replace(/<zoom_action[\s\S]*?\/>/gi, '').trim();
+    return { hasAction: true, type, params, cleanText };
   }
 
-  const cleanText = fullText.replace(/\[ZOOM_(CONFIRM_REQUIRED|ACTION):[\s\S]*?\]/gi, '').trim();
-
-  return {
-    hasAction: true,
-    type,
-    params,
-    cleanText
-  };
+  return { hasAction: false, cleanText: fullText };
 }
 
 // AI Activity Panel Component
@@ -291,151 +308,133 @@ const ZoomActionCard = ({ action, onConfirm, onCancel, onRetry, onAnalyze, theme
   theme: string 
 }) => {
   const status = action.status || 'pending';
-  const isExecuting = action.confirmed && !action.executed;
-  const isDone = action.executed || status === 'accepted' || status === 'failed';
-  const isError = status === 'failed' || !!action.error;
-  const isAccepted = status === 'accepted';
+  const isAccepted = status === 'accepted' || action.executed;
   const isRejected = status === 'rejected';
 
+  // Extract meeting data from various possible structures
+  const meeting = action.result || action.params || action;
+  const topic = meeting.topic || meeting.name || 'Zoom Meeting';
+  const startTime = meeting.startTime || meeting.start_time;
+  const duration = meeting.duration;
+  const meetingId = meeting.meetingId || meeting.id;
+  const joinUrl = meeting.join_url || meeting.joinUrl;
+  const host = meeting.host_email || meeting.host;
+  const meetingStatus = meeting.status; // Zoom status like 'waiting', 'started', etc.
+  
   if (isRejected) return null;
+
+  const isLive = meetingStatus === 'started' || meetingStatus === 'active' || meetingStatus === 'in_progress';
 
   return (
     <div className={cn(
-      "p-4 rounded-2xl border max-w-[320px] w-full my-2 animate-in fade-in slide-in-from-bottom-2 duration-300",
-      theme === 'light' ? "bg-white border-neutral-200 shadow-sm" : "bg-neutral-900 border-neutral-800 shadow-xl"
+      "p-5 rounded-[24px] border max-w-[340px] w-full my-3 animate-in fade-in slide-in-from-bottom-3 duration-500",
+      theme === 'light' ? "bg-white border-neutral-200 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)]" : "bg-neutral-900 border-neutral-800 shadow-[0_10px_30px_-10px_rgba(0,0,0,0.5)]"
     )}>
-      <div className="flex items-center gap-3 mb-3">
-        <div className={cn(
-          "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
-          isAccepted ? "bg-emerald-500" : isError ? "bg-red-500" : "bg-blue-500"
-        )}>
-          {isAccepted ? <CheckCircle2 size={16} className="text-white" /> : 
-           isError ? <AlertCircle size={16} className="text-white" /> : 
-           <Video size={16} className="text-white" />}
-        </div>
+      {/* Header with Title and Live Badge */}
+      <div className="flex items-start justify-between mb-4">
         <div className="flex-1 min-w-0">
-          <h4 className="text-[13px] font-bold tracking-tight truncate capitalize">
-            {action.type === 'create' ? 'Create Zoom Meeting' : 
-             action.type === 'update' ? 'Update Zoom Meeting' :
-             action.type === 'cancel' ? 'Cancel Zoom Meeting' : 'Zoom Action'}
-          </h4>
-          <p className="text-[11px] opacity-60 font-medium">Zoom Capability</p>
-        </div>
-      </div>
-
-      <div className="space-y-2 mb-4 bg-neutral-50 dark:bg-neutral-800/50 p-3 rounded-xl border border-neutral-100 dark:border-neutral-800/40">
-        {action.params?.topic && (
-          <div className="flex justify-between gap-2 text-[11.5px]">
-            <span className="opacity-40">Topic</span>
-            <span className="font-semibold text-right truncate max-w-[120px]">{action.params.topic}</span>
-          </div>
-        )}
-        {action.params?.startTime && (
-          <div className="flex justify-between gap-2 text-[11.5px]">
-            <span className="opacity-40">Time</span>
-            <span className="font-semibold text-right">
-              {new Date(action.params.startTime).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-            </span>
-          </div>
-        )}
-        {action.params?.duration && (
-          <div className="flex justify-between gap-2 text-[11.5px]">
-            <span className="opacity-40">Duration</span>
-            <span className="font-semibold text-right">{action.params.duration} min</span>
-          </div>
-        )}
-      </div>
-
-      {!isDone && status === 'pending' ? (
-        <div className="flex gap-2">
-          <button
-            onClick={onCancel}
-            disabled={isExecuting}
-            className={cn(
-              "flex-1 px-3 py-2 rounded-xl text-[12px] font-bold transition-all cursor-pointer",
-              theme === 'light' ? "bg-neutral-100 text-neutral-600 hover:bg-neutral-200" : "bg-neutral-800 text-neutral-400 hover:bg-neutral-700"
-            )}
-          >
-            Cancel
-          </button>
-          <button
-            onClick={onConfirm}
-            disabled={isExecuting}
-            className={cn(
-              "flex-1 px-3 py-2 rounded-xl text-[12px] font-bold text-white transition-all flex items-center justify-center gap-2 cursor-pointer",
-              "bg-blue-600 hover:bg-blue-500 shadow-md shadow-blue-500/10 active:scale-95"
-            )}
-          >
-            {isExecuting ? <Loader2 size={12} className="animate-spin" /> : 'Confirm'}
-          </button>
-        </div>
-      ) : isError ? (
-        <div className="flex flex-col gap-2">
-          <div className="p-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-500 text-[11px] font-medium flex items-center gap-2">
-            <AlertCircle size={14} />
-            <span className="truncate">{action.error || 'Execution failed'}</span>
-          </div>
-          <div className="flex gap-2">
-            <button
-              onClick={onCancel}
-              className={cn(
-                "flex-1 px-3 py-2 rounded-xl text-[12px] font-bold transition-all cursor-pointer",
-                theme === 'light' ? "bg-neutral-100 text-neutral-600 hover:bg-neutral-200" : "bg-neutral-800 text-neutral-400 hover:bg-neutral-700"
-              )}
-            >
-              Cancel
-            </button>
-            <button
-              onClick={onRetry || onConfirm}
-              className="flex-1 px-3 py-2 rounded-xl text-[12px] font-bold text-white bg-blue-600 hover:bg-blue-500 cursor-pointer"
-            >
-              Retry
-            </button>
-          </div>
-        </div>
-      ) : isAccepted ? (
-        <div className="flex flex-col gap-2">
-          <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 text-[11px] font-bold flex items-center justify-center gap-2">
-            <CheckCircle2 size={14} />
-            {action.type === 'create' ? 'Meeting Created' : 'Action Completed'}
-          </div>
-          {action.result?.join_url && (
-            <div className="flex flex-col gap-2">
-              <a 
-                href={action.result.join_url} 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="w-full py-2.5 rounded-xl bg-blue-600 text-white text-[12.5px] font-bold text-center hover:bg-blue-500 transition-all shadow-md shadow-blue-500/20 active:scale-[0.98]"
-              >
-                Join Meeting
-              </a>
-              <div className="flex gap-2">
-                <button 
-                  onClick={() => {
-                    navigator.clipboard.writeText(action.result.join_url);
-                    showToast("Invite link copied");
-                  }}
-                  className={cn(
-                    "flex-1 py-2 rounded-lg text-[11px] font-semibold transition-all",
-                    theme === 'light' ? "bg-neutral-100 text-neutral-600 hover:bg-neutral-200" : "bg-neutral-800 text-neutral-400 hover:bg-neutral-700"
-                  )}
-                >
-                  Copy Invite
-                </button>
-                <button 
-                  onClick={onAnalyze}
-                  className={cn(
-                    "flex-1 py-2 rounded-lg text-[11px] font-semibold transition-all cursor-pointer",
-                    theme === 'light' ? "bg-neutral-100 text-neutral-600 hover:bg-neutral-200" : "bg-neutral-800 text-neutral-400 hover:bg-neutral-700"
-                  )}
-                >
-                  Analyze
-                </button>
-              </div>
+          <div className="flex items-center gap-2 mb-1">
+            <div className="w-6 h-6 rounded-lg bg-blue-500 flex items-center justify-center shrink-0">
+              <Video size={13} className="text-white" />
             </div>
-          )}
+            <span className="text-[11px] font-bold tracking-widest uppercase opacity-40">Meeting Card</span>
+          </div>
+          <h4 className="text-[16px] font-bold tracking-tight leading-tight mb-1 truncate">
+            {topic}
+          </h4>
+          {host && <p className="text-[11px] opacity-50 truncate font-medium">Host: {host}</p>}
         </div>
-      ) : null}
+        
+        {isLive && (
+          <div className="bg-red-500 text-white px-2 py-1 rounded-full flex items-center gap-1 animate-pulse shrink-0">
+            <div className="w-1.5 h-1.5 rounded-full bg-white" />
+            <span className="text-[10px] font-bold">LIVE NOW</span>
+          </div>
+        )}
+      </div>
+
+      {/* Meeting Details Bento */}
+      <div className={cn(
+        "grid grid-cols-2 gap-2 mb-5 p-3 rounded-2xl border",
+        theme === 'light' ? "bg-neutral-50/50 border-neutral-100" : "bg-white/5 border-white/5"
+      )}>
+        <div className="space-y-0.5">
+          <p className="text-[10px] uppercase font-bold opacity-30 tracking-wider">Date</p>
+          <p className="text-[12px] font-bold">
+            {startTime ? new Date(startTime).toLocaleDateString([], { month: 'short', day: 'numeric' }) : 'TBD'}
+          </p>
+        </div>
+        <div className="space-y-0.5">
+          <p className="text-[10px] uppercase font-bold opacity-30 tracking-wider">Time</p>
+          <p className="text-[12px] font-bold">
+            {startTime ? new Date(startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'TBD'}
+          </p>
+        </div>
+        {duration && (
+          <div className="space-y-0.5">
+            <p className="text-[10px] uppercase font-bold opacity-30 tracking-wider">Duration</p>
+            <p className="text-[12px] font-bold">{duration} min</p>
+          </div>
+        )}
+        <div className="space-y-0.5">
+          <p className="text-[10px] uppercase font-bold opacity-30 tracking-wider">Status</p>
+          <p className={cn(
+            "text-[12px] font-bold capitalize",
+            isLive ? "text-red-500" : "text-neutral-500"
+          )}>
+            {meetingStatus || 'Scheduled'}
+          </p>
+        </div>
+      </div>
+
+      {/* Primary Actions */}
+      <div className="space-y-2">
+        {joinUrl && (
+          <a 
+            href={joinUrl} 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl bg-blue-600 text-white text-[13px] font-bold hover:bg-blue-500 transition-all shadow-lg shadow-blue-500/20 active:scale-[0.98]"
+          >
+            <Video size={14} />
+            Join Meeting
+          </a>
+        )}
+
+        <div className="grid grid-cols-2 gap-2">
+          <button 
+            onClick={() => onAnalyze && onAnalyze()}
+            className={cn(
+              "flex items-center justify-center gap-1.5 py-2 rounded-xl text-[11.5px] font-bold transition-all border cursor-pointer",
+              theme === 'light' ? "bg-white border-neutral-200 hover:bg-neutral-50" : "bg-neutral-800 border-neutral-700 hover:bg-neutral-700"
+            )}
+          >
+            <Brain size={13} />
+            Analyze
+          </button>
+          <button 
+            onClick={() => {/* Trigger Summary logic */}}
+            className={cn(
+              "flex items-center justify-center gap-1.5 py-2 rounded-xl text-[11.5px] font-bold transition-all border cursor-pointer",
+              theme === 'light' ? "bg-white border-neutral-200 hover:bg-neutral-50" : "bg-neutral-800 border-neutral-700 hover:bg-neutral-700"
+            )}
+          >
+            <FileText size={13} />
+            Summary
+          </button>
+        </div>
+
+        <button 
+          onClick={() => {/* Trigger Action Items logic */}}
+          className={cn(
+            "flex items-center justify-center gap-1.5 w-full py-2 rounded-xl text-[11.5px] font-bold transition-all border cursor-pointer",
+            theme === 'light' ? "bg-white border-neutral-200 hover:bg-neutral-50" : "bg-neutral-800 border-neutral-700 hover:bg-neutral-700"
+          )}
+        >
+          <CheckSquare size={13} />
+          Extract Action Items
+        </button>
+      </div>
     </div>
   );
 };
@@ -5136,21 +5135,44 @@ export default function Home() {
                                   )}
                                   
                                   {zoom.hasAction && (
-                                    <ZoomActionCard 
-                                      action={message.zoomAction || zoom}
-                                      theme={theme}
-                                      onConfirm={() => handleExecuteZoomAction(message.id, zoom.type!, zoom.params)}
-                                      onCancel={() => handleRejectZoomAction(message.id)}
-                                      onRetry={() => handleExecuteZoomAction(message.id, zoom.type!, zoom.params)}
-                                      onAnalyze={() => {
-                                        const meetingId = (message.zoomAction || zoom).result?.id || (message.zoomAction || zoom).params?.meetingId;
-                                        if (meetingId) {
-                                          handleSubmit(undefined, `Analyze Zoom meeting ID ${meetingId}. Provide an Executive Summary, Key Topics, Important Decisions, Action Items, Participants, Timeline, Questions Asked, Open Issues, Follow-ups, and Risks. Use real meeting data from the recording and transcript.`);
-                                        } else {
-                                          showToast("Could not determine Meeting ID to analyze.");
-                                        }
-                                      }}
-                                    />
+                                    <div className="flex flex-col gap-3">
+                                      {Array.isArray(zoom.params) ? (
+                                        zoom.params.map((m: any, idx: number) => (
+                                          <ZoomActionCard 
+                                            key={m.id || idx}
+                                            action={m}
+                                            theme={theme}
+                                            onConfirm={() => handleExecuteZoomAction(message.id, zoom.type!, m)}
+                                            onCancel={() => handleRejectZoomAction(message.id)}
+                                            onRetry={() => handleExecuteZoomAction(message.id, zoom.type!, m)}
+                                            onAnalyze={() => {
+                                              const meetingId = m.id || m.meetingId;
+                                              if (meetingId) {
+                                                handleSubmit(undefined, `Analyze Zoom meeting ID ${meetingId}. Provide an Executive Summary, Key Topics, Important Decisions, Action Items, Participants, Timeline, Questions Asked, Open Issues, Follow-ups, and Risks. Use real meeting data from the recording and transcript.`);
+                                              } else {
+                                                showToast("Could not determine Meeting ID to analyze.");
+                                              }
+                                            }}
+                                          />
+                                        ))
+                                      ) : (
+                                        <ZoomActionCard 
+                                          action={message.zoomAction || zoom}
+                                          theme={theme}
+                                          onConfirm={() => handleExecuteZoomAction(message.id, zoom.type!, zoom.params)}
+                                          onCancel={() => handleRejectZoomAction(message.id)}
+                                          onRetry={() => handleExecuteZoomAction(message.id, zoom.type!, zoom.params)}
+                                          onAnalyze={() => {
+                                            const meetingId = (message.zoomAction || zoom).result?.id || (message.zoomAction || zoom).params?.meetingId || (message.zoomAction || zoom).params?.id;
+                                            if (meetingId) {
+                                              handleSubmit(undefined, `Analyze Zoom meeting ID ${meetingId}. Provide an Executive Summary, Key Topics, Important Decisions, Action Items, Participants, Timeline, Questions Asked, Open Issues, Follow-ups, and Risks. Use real meeting data from the recording and transcript.`);
+                                            } else {
+                                              showToast("Could not determine Meeting ID to analyze.");
+                                            }
+                                          }}
+                                        />
+                                      )}
+                                    </div>
                                   )}
 
                                   {parsedDoc.hasDocument && (
