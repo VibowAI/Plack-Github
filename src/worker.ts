@@ -8,6 +8,8 @@ import { createAdminClient, createClient } from '@/lib/supabase/client';
 import { detectDocumentTrigger } from '@/lib/ai/intent';
 import { classifyMemory } from '@/lib/ai/memory-classifier';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
+import { EventEmitter } from 'events';
+import crypto from 'crypto';
 
 
 // Setup TypeScript bindings interface
@@ -1055,77 +1057,240 @@ interface ChatMessage {
   parts?: any[];
 }
 
-app.post('/api/chat', async (c) => {
-  let chatId: string | undefined = undefined;
-  let model = "models/gemini-3.1-flash-lite-preview";
-  try {
-    const payload = await c.req.json();
-    chatId = payload.chatId;
-    model = payload.model || "models/gemini-3.1-flash-lite-preview";
-    const isDeepResearch = payload.isDeepResearch === true;
-    const { 
-      messages, 
-      systemInstructionOverride, 
-      useWebSearch,
-      messageId,
-      userId,
-      autoSaveMemories = true,
-      deepResearchWebSearch = true,
-      preferredDomains = [],
-      activeMemories
-    } = payload;
+interface Job {
+  id: string;
+  user_id: string;
+  chat_id: string;
+  message_id: string;
+  model: string;
+  prompt: string;
+  payload: any;
+  status: 'queued' | 'running' | 'streaming' | 'completed' | 'failed' | 'cancelled';
+  progress: number;
+  partial_output: string;
+  final_output?: string;
+  error?: string;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string;
+}
 
-    if (!messages || !Array.isArray(messages)) {
-      return c.json({ error: "Messages array is required" }, 400);
-    }
+const inMemoryJobs = new Map<string, Job>();
+const jobEventEmitter = new EventEmitter();
+jobEventEmitter.setMaxListeners(200);
 
-    console.log(`[MODEL] GEMINI CHAT REQUEST | Chat ID: ${chatId || 'N/A'} | Model: ${model} | DeepResearch: ${isDeepResearch}`);
+class AIJobProcessor {
+  private static isProcessing = false;
+  private static initialized = false;
+  private static envBindings: any = {};
 
-    const ai = getGeminiClient([
-      c.env.MY_GEMINI_API_KEY,
-      c.env.MY_GEMINI_API_KEY_2,
-      c.env.GEMINI_API_KEY
-    ]);
+  public static init() {
+    if (this.initialized) return;
+    this.initialized = true;
 
-    // 1. Retrieve Memories
-    let memoryContext = "";
-    let memoriesUsedCount = 0;
-    let memoriesUsedList: any[] = [];
-    
-    if (activeMemories && Array.isArray(activeMemories) && activeMemories.length > 0) {
-      memoriesUsedCount = activeMemories.length;
-      memoriesUsedList = activeMemories;
-      memoryContext = "=== USER MEMORIES ===\nThese are specific memories explicitly selected by the user for this conversation priority:\n";
-      activeMemories.forEach((m: any, i: number) => {
-        memoryContext += `${i + 1}. [${m.category || 'User Fact'}] ${m.content}\n`;
-      });
-      memoryContext += "=====================\n\n";
-    } 
-    else if (userId) {
+    // Run polling loop every 1.5 seconds
+    setInterval(async () => {
       try {
-        const fetchAll = await getMemories(userId);
-        const autoLimit = fetchAll.slice(0, 15);
-        memoriesUsedList = autoLimit;
-        
-        if (autoLimit.length > 0) {
-          memoriesUsedCount = autoLimit.length;
-          memoryContext = "=== USER MEMORIES ===\nThese are things you have remembered about the user from previous conversations:\n";
-          autoLimit.forEach((m, i) => {
-            memoryContext += `${i + 1}. [${m.category}] ${m.content}\n`;
-          });
-          memoryContext += "=====================\n\n";
-        }
+        await this.processNextJob();
       } catch (err) {
-        console.error("[MEMORY] Failed to fetch memories automatically", err);
+        console.error("[JOB PROCESSOR] Poller exception:", err);
+      }
+    }, 1500);
+
+    // Scan on start for any "running" or "streaming" jobs and auto-reset them to "queued" so they resume
+    this.resetStaleJobs().catch(err => {
+      console.error("[JOB PROCESSOR] Error resetting stale jobs:", err);
+    });
+
+    console.log("[JOB PROCESSOR] Background processor initialized successfully.");
+  }
+
+  public static captureEnv(env: any) {
+    if (env) {
+      this.envBindings = { ...this.envBindings, ...env };
+      // Sync to process.env
+      globalThis.process = globalThis.process || {};
+      globalThis.process.env = globalThis.process.env || {};
+      for (const [k, v] of Object.entries(env)) {
+        if (typeof v === 'string') {
+          globalThis.process.env[k] = v;
+        }
       }
     }
+  }
 
-    // Extract Adaptive User Profile Summary
-    let profileSummary: any = null;
-    if (messages && messages.length > 1) {
+  private static async resetStaleJobs() {
+    const supabase = createAdminClient();
+    try {
+      const { data, error } = await supabase
+        .from('ai_generation_jobs')
+        .select('id, status')
+        .in('status', ['running', 'streaming']);
+      
+      if (!error && data && data.length > 0) {
+        console.log(`[JOB PROCESSOR] Resetting ${data.length} stale jobs to queued status...`);
+        for (const j of data) {
+          await supabase
+            .from('ai_generation_jobs')
+            .update({ status: 'queued', updated_at: new Date().toISOString() })
+            .eq('id', j.id);
+        }
+      }
+    } catch (e) {
+      // Database table might not exist yet
+    }
+
+    // Reset in-memory jobs
+    for (const [id, j] of inMemoryJobs.entries()) {
+      if (j.status === 'running' || j.status === 'streaming') {
+        j.status = 'queued';
+        j.updated_at = new Date().toISOString();
+        inMemoryJobs.set(id, { ...j });
+      }
+    }
+  }
+
+  public static trigger() {
+    this.processNextJob().catch(err => {
+      console.error("[JOB PROCESSOR] Trigger error:", err);
+    });
+  }
+
+  private static async processNextJob() {
+    if (this.isProcessing) return;
+    this.isProcessing = true;
+
+    try {
+      let job: Job | null = null;
+      let usingDb = false;
+
+      const supabase = createAdminClient();
       try {
-        const recentMessages = messages.slice(-10).map((m: any) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content || ""}`).join("\n");
-        const profilePrompt = `You are a high-fidelity user profiling assistant for Plack. 
+        const { data, error } = await supabase
+          .from('ai_generation_jobs')
+          .select('*')
+          .eq('status', 'queued')
+          .order('created_at', { ascending: true })
+          .limit(1);
+
+        if (!error && data && data.length > 0) {
+          job = data[0] as Job;
+          usingDb = true;
+        }
+      } catch (e) {
+        // Table not found or database issue, use in-memory fallback
+      }
+
+      if (!job) {
+        // Look in-memory
+        const queuedInMemory = Array.from(inMemoryJobs.values())
+          .filter(j => j.status === 'queued')
+          .sort((a, b) => a.created_at.localeCompare(b.created_at));
+
+        if (queuedInMemory.length > 0) {
+          job = queuedInMemory[0];
+          usingDb = false;
+        }
+      }
+
+      if (!job) {
+        this.isProcessing = false;
+        return;
+      }
+
+      await this.runJob(job, usingDb);
+    } catch (err) {
+      console.error("[JOB PROCESSOR] Error in processNextJob:", err);
+    } finally {
+      this.isProcessing = false;
+    }
+  }
+
+  private static async runJob(job: Job, usingDb: boolean) {
+    console.log(`[JOB PROCESSOR] [START] Processing job ${job.id} for Chat: ${job.chat_id}`);
+    const supabase = createAdminClient();
+
+    // 1. Mark as running
+    job.status = 'running';
+    job.updated_at = new Date().toISOString();
+    if (usingDb) {
+      await supabase
+        .from('ai_generation_jobs')
+        .update({ status: 'running', updated_at: job.updated_at })
+        .eq('id', job.id);
+    } else {
+      inMemoryJobs.set(job.id, { ...job });
+    }
+    jobEventEmitter.emit(`update:${job.id}`, { status: 'running' });
+
+    try {
+      const payload = job.payload;
+      const { 
+        messages, 
+        systemInstructionOverride, 
+        useWebSearch,
+        userId,
+        autoSaveMemories = true,
+        deepResearchWebSearch = true,
+        preferredDomains = [],
+        activeMemories
+      } = payload;
+
+      const model = job.model || "models/gemini-3.1-flash-lite-preview";
+      const isDeepResearch = payload.isDeepResearch === true;
+
+      // Initialize Gemini Client
+      const keysToUse = [
+        this.envBindings.MY_GEMINI_API_KEY,
+        this.envBindings.MY_GEMINI_API_KEY_2,
+        this.envBindings.GEMINI_API_KEY,
+        process.env.MY_GEMINI_API_KEY,
+        process.env.MY_GEMINI_API_KEY_2,
+        process.env.GEMINI_API_KEY
+      ].filter(Boolean);
+
+      const ai = getGeminiClient(keysToUse);
+
+      // --- GENERATE MEMORIES / ADAPTIVE PROFILE / PARSING ---
+      // 1. Retrieve Memories
+      let memoryContext = "";
+      let memoriesUsedCount = 0;
+      let memoriesUsedList: any[] = [];
+      
+      if (activeMemories && Array.isArray(activeMemories) && activeMemories.length > 0) {
+        memoriesUsedCount = activeMemories.length;
+        memoriesUsedList = activeMemories;
+        memoryContext = "=== USER MEMORIES ===\nThese are specific memories explicitly selected by the user for this conversation priority:\n";
+        activeMemories.forEach((m: any, i: number) => {
+          memoryContext += `${i + 1}. [${m.category || 'User Fact'}] ${m.content}\n`;
+        });
+        memoryContext += "=====================\n\n";
+      } 
+      else if (userId) {
+        try {
+          const fetchAll = await getMemories(userId);
+          const autoLimit = fetchAll.slice(0, 15);
+          memoriesUsedList = autoLimit;
+          
+          if (autoLimit.length > 0) {
+            memoriesUsedCount = autoLimit.length;
+            memoryContext = "=== USER MEMORIES ===\nThese are things you have remembered about the user from previous conversations:\n";
+            autoLimit.forEach((m, i) => {
+              memoryContext += `${i + 1}. [${m.category}] ${m.content}\n`;
+            });
+            memoryContext += "=====================\n\n";
+          }
+        } catch (err) {
+          console.error("[JOB PROCESSOR] [MEMORY] Failed to fetch memories automatically", err);
+        }
+      }
+
+      // Extract Adaptive User Profile Summary
+      let profileSummary: any = null;
+      if (messages && messages.length > 1) {
+        try {
+          const recentMessages = messages.slice(-10).map((m: any) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content || ""}`).join("\n");
+          const profilePrompt = `You are a high-fidelity user profiling assistant for Plack. 
 Analyze the dialogue history between a User and their Assistant below. 
 Deduce:
 1. "writingStyle": user's preferred writing style
@@ -1143,247 +1308,275 @@ Respond with exactly a JSON object:
   "interests": "brief deduction",
   "projectTypes": "brief deduction"
 }`;
-        const profileRes = await ai.models.generateContent({
-          model: "models/gemini-3.1-flash-lite-preview",
-          contents: [{ role: 'user', parts: [{ text: profilePrompt }] }],
-          config: { responseMimeType: "application/json" }
-        });
-        profileSummary = JSON.parse(profileRes.text || "{}");
-      } catch (err) {
-        console.warn("[ADAPTIVE PROFILE] Inference failed", err);
-      }
-    }
-
-    // Map message history to GenAI SDK Content format
-    let userText = "";
-    const contents = messages.map((m: ChatMessage) => {
-      if (m.role === 'user') {
-        if (typeof m.content === 'string') userText = m.content;
-        else if (m.parts) {
-          const textPart = m.parts.find(p => p.text);
-          if (textPart) userText = textPart.text;
+          const profileRes = await ai.models.generateContent({
+            model: "models/gemini-3.1-flash-lite-preview",
+            contents: [{ role: 'user', parts: [{ text: profilePrompt }] }],
+            config: { responseMimeType: "application/json" }
+          });
+          profileSummary = JSON.parse(profileRes.text || "{}");
+        } catch (err) {
+          console.warn("[JOB PROCESSOR] [ADAPTIVE PROFILE] Inference failed", err);
         }
       }
-      if (m.parts && m.parts.length > 0) {
+
+      // Map message history to GenAI SDK Content format
+      let userText = job.prompt || "";
+      const contents = messages.map((m: ChatMessage) => {
+        if (m.role === 'user') {
+          if (typeof m.content === 'string') userText = m.content;
+          else if (m.parts) {
+            const textPart = m.parts.find(p => p.text);
+            if (textPart) userText = textPart.text;
+          }
+        }
+        if (m.parts && m.parts.length > 0) {
+          return {
+            role: m.role,
+            parts: m.parts.map(p => {
+              if (p.inlineData) {
+                return {
+                  inlineData: {
+                    mimeType: p.inlineData.mimeType,
+                    data: p.inlineData.data
+                  }
+                };
+              }
+              return { text: p.text || "" };
+            })
+          };
+        }
         return {
           role: m.role,
-          parts: m.parts.map(p => {
-            if (p.inlineData) {
-              return {
-                inlineData: {
-                  mimeType: p.inlineData.mimeType,
-                  data: p.inlineData.data
-                }
-              };
-            }
-            return { text: p.text || "" };
-          })
+          parts: [{ text: m.content }]
         };
-      }
-      return {
-        role: m.role,
-        parts: [{ text: m.content }]
+      });
+
+      let fullResponseText = "";
+
+      // --- HELPER TO BATCH EMIT AND DB UPDATE ---
+      let dbBatchTimer: any = null;
+
+      const sendChunk = async (chunkObj: any) => {
+        // Emit in real-time to active listeners
+        jobEventEmitter.emit(`update:${job.id}`, chunkObj);
+
+        // Track text accumulation
+        if (chunkObj.text) {
+          fullResponseText += chunkObj.text;
+          job.partial_output = fullResponseText;
+        }
+
+        // Batch DB saves every 350ms to prevent database write flooding
+        if (!dbBatchTimer) {
+          dbBatchTimer = setTimeout(async () => {
+            dbBatchTimer = null;
+            job.status = 'streaming';
+            job.updated_at = new Date().toISOString();
+            if (usingDb) {
+              await supabase
+                .from('ai_generation_jobs')
+                .update({ 
+                  partial_output: fullResponseText, 
+                  status: 'streaming', 
+                  updated_at: job.updated_at 
+                })
+                .eq('id', job.id);
+            } else {
+              inMemoryJobs.set(job.id, { ...job });
+            }
+          }, 350);
+        }
       };
-    });
 
-    const encoder = new TextEncoder();
-    let isClientConnected = true;
-    let fullResponseText = "";
+      // --- DEEP RESEARCH MODE WORKFLOW ---
+      if (isDeepResearch) {
+        const lastUserMessage = messages[messages.length - 1];
+        let userPrompt = "deep research";
+        if (lastUserMessage) {
+          if (typeof lastUserMessage.content === 'string' && lastUserMessage.content) {
+            userPrompt = lastUserMessage.content;
+          } else if (lastUserMessage.parts && Array.isArray(lastUserMessage.parts)) {
+            const textPart = lastUserMessage.parts.find((p: any) => p.text && typeof p.text === 'string');
+            if (textPart) userPrompt = textPart.text;
+          }
+        }
 
-    // DEEP RESEARCH MODE WORKFLOW
-    if (isDeepResearch) {
-      const customReadableStream = new ReadableStream({
-        async start(controller) {
-          try {
-            const lastUserMessage = messages[messages.length - 1];
-            let userPrompt = "deep research";
-            if (lastUserMessage) {
-              if (typeof lastUserMessage.content === 'string' && lastUserMessage.content) {
-                userPrompt = lastUserMessage.content;
-              } else if (lastUserMessage.parts && Array.isArray(lastUserMessage.parts)) {
-                const textPart = lastUserMessage.parts.find((p: any) => p.text && typeof p.text === 'string');
-                if (textPart) userPrompt = textPart.text;
-              }
-            }
+        const timeline = [
+          "Understanding request",
+          "Planning research",
+          "Searching sources",
+          "Analyzing sources",
+          "Cross-checking information",
+          "Generating report",
+          "Completed"
+        ];
 
-            const timeline = [
-              "Understanding request",
-              "Planning research",
-              "Searching sources",
-              "Analyzing sources",
-              "Cross-checking information",
-              "Generating report",
-              "Completed"
-            ];
+        if (memoriesUsedCount > 0) {
+          await sendChunk({ 
+            memoriesUsedCount,
+            memoriesUsed: memoriesUsedList,
+            isManualMemories: activeMemories && activeMemories.length > 0
+          });
+        }
+        if (profileSummary) {
+          await sendChunk({ profileSummary });
+        }
 
-            if (memoriesUsedCount > 0) {
-              controller.enqueue(encoder.encode(JSON.stringify({ 
-                memoriesUsedCount,
-                memoriesUsed: memoriesUsedList,
-                isManualMemories: activeMemories && activeMemories.length > 0
-              }) + "\n"));
-            }
-            if (profileSummary) {
-              controller.enqueue(encoder.encode(JSON.stringify({ profileSummary }) + "\n"));
-            }
+        await sendChunk({ 
+          researchTimeline: timeline, 
+          activeStageIndex: 0, 
+          researchStatus: "Analyzing prompt intent..." 
+        });
 
-            controller.enqueue(encoder.encode(JSON.stringify({ 
-              researchTimeline: timeline, 
-              activeStageIndex: 0, 
-              researchStatus: "Analyzing prompt intent..." 
-            }) + "\n"));
+        await sendChunk({ 
+          researchTimeline: timeline, 
+          activeStageIndex: 1, 
+          researchStatus: "Generating search query strategies..." 
+        });
 
-            controller.enqueue(encoder.encode(JSON.stringify({ 
-              researchTimeline: timeline, 
-              activeStageIndex: 1, 
-              researchStatus: "Generating search query strategies..." 
-            }) + "\n"));
-
-            let searchQueries = [userPrompt];
-            try {
-              const queryGenerationPrompt = `We are conducting in-depth research on: "${userPrompt}".
+        let searchQueries = [userPrompt];
+        try {
+          const queryGenerationPrompt = `We are conducting in-depth research on: "${userPrompt}".
 Formulate exactly three discrete, distinct search queries that explore this topic from multiple dimensions.
 Return ONLY a JSON array of strings, with no markdown tags. Example: ["query 1", "query 2", "query 3"]`;
-              
-              const queryResponse = await ai.models.generateContent({
-                model: "models/gemini-3.1-flash-lite-preview",
-                contents: queryGenerationPrompt
-              });
+          
+          const queryResponse = await ai.models.generateContent({
+            model: "models/gemini-3.1-flash-lite-preview",
+            contents: queryGenerationPrompt
+          });
 
-              const responseText = queryResponse.text || "";
-              const cleanedJson = responseText.replace(/```json/gi, "").replace(/```/gi, "").trim();
-              const parsedQueries = JSON.parse(cleanedJson);
-              if (Array.isArray(parsedQueries) && parsedQueries.length > 0) {
-                searchQueries = parsedQueries;
-              }
-            } catch (err: any) {
-              console.warn("[DEEP RESEARCH] Failed to generate multi-queries, falling back", err.message || err);
+          const responseText = queryResponse.text || "";
+          const cleanedJson = responseText.replace(/```json/gi, "").replace(/```/gi, "").trim();
+          const parsedQueries = JSON.parse(cleanedJson);
+          if (Array.isArray(parsedQueries) && parsedQueries.length > 0) {
+            searchQueries = parsedQueries;
+          }
+        } catch (err: any) {
+          console.warn("[JOB PROCESSOR] [DEEP RESEARCH] Failed to generate multi-queries, falling back", err.message || err);
+        }
+
+        await sendChunk({ 
+          researchTimeline: timeline, 
+          activeStageIndex: 2, 
+          researchStatus: `Acquiring references for multi-perspective search queries (${searchQueries.length} channels)...` 
+        });
+
+        let searchSources: any[] = [];
+        const searchTavily = async (queryStr: string, useStrictDomains = true) => {
+          if (!deepResearchWebSearch) return [];
+          const tavKey = this.envBindings.TAVILY_API_KEY || process.env.TAVILY_API_KEY;
+          if (!tavKey) return [];
+          
+          try {
+            let finalQuery = queryStr;
+            if (useStrictDomains && preferredDomains && preferredDomains.length > 0) {
+              const sitesFilter = preferredDomains.map((d: string) => `site:${d}`).join(" OR ");
+              finalQuery = `(${queryStr}) (${sitesFilter})`;
             }
-
-            controller.enqueue(encoder.encode(JSON.stringify({ 
-              researchTimeline: timeline, 
-              activeStageIndex: 2, 
-              researchStatus: `Acquiring references for multi-perspective search queries (${searchQueries.length} channels)...` 
-            }) + "\n"));
-
-            let searchSources: any[] = [];
-            const searchTavily = async (queryStr: string, useStrictDomains = true) => {
-              if (!deepResearchWebSearch) {
-                return [];
-              }
-              if (!c.env.TAVILY_API_KEY) {
-                return [];
-              }
-              try {
-                let finalQuery = queryStr;
-                if (useStrictDomains && preferredDomains && preferredDomains.length > 0) {
-                  const sitesFilter = preferredDomains.map((d: string) => `site:${d}`).join(" OR ");
-                  finalQuery = `(${queryStr}) (${sitesFilter})`;
-                }
-                const res = await fetch("https://api.tavily.com/search", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    api_key: c.env.TAVILY_API_KEY,
-                    query: finalQuery,
-                    search_depth: "basic",
-                    max_results: 3
-                  })
-                });
-                if (res.ok) {
-                  const d = (await res.json()) as any;
-                  return d.results || [];
-                }
-              } catch (e) {
-                console.error(`[WEB_SEARCH] Tavily query fail for ${queryStr}`, e);
-              }
-              return [];
-            };
-
-            for (let i = 0; i < searchQueries.length; i++) {
-              const currentQuery = searchQueries[i];
-              controller.enqueue(encoder.encode(JSON.stringify({ 
-                researchStatus: `Searching index database for: "${currentQuery.substring(0, 35)}..." (${i+1}/${searchQueries.length})` 
-              }) + "\n"));
-
-              let results: any[] = [];
-              const hasPreferredDomains = preferredDomains && preferredDomains.length > 0;
-
-              if (hasPreferredDomains) {
-                const domainResults = await searchTavily(currentQuery, true);
-                results.push(...domainResults);
-              }
-
-              if (deepResearchWebSearch && (!hasPreferredDomains || results.length < 3)) {
-                const generalResults = await searchTavily(currentQuery, false);
-                const existingUrls = new Set(results.map((r: any) => r.url));
-                generalResults.forEach((r: any) => {
-                  if (!existingUrls.has(r.url)) {
-                    results.push(r);
-                  }
-                });
-              }
-
-              results.forEach((r: any) => {
-                searchSources.push({
-                  title: r.title,
-                  url: r.url,
-                  content: r.content
-                });
-              });
-            }
-
-            if (searchSources.length === 0 && deepResearchWebSearch) {
-              const fallbackResults = await searchTavily(userPrompt, false);
-              fallbackResults.forEach((r: any) => {
-                searchSources.push({
-                  title: r.title,
-                  url: r.url,
-                  content: r.content
-                });
-              });
-            }
-
-            if (searchSources.length > 0) {
-              controller.enqueue(encoder.encode(JSON.stringify({ sources: searchSources }) + "\n"));
-            }
-
-            controller.enqueue(encoder.encode(JSON.stringify({ 
-              researchTimeline: timeline, 
-              activeStageIndex: 3, 
-              researchStatus: "Cross-referencing resources and identifying critical conflicts..." 
-            }) + "\n"));
-
-            let sourcesContext = "COORDINATED SOURCES:\n\n";
-            searchSources.forEach((src, idx) => {
-              sourcesContext += `[Source ${idx+1}]\nTitle: ${src.title}\nURL: ${src.url}\nContent: ${src.content}\n\n`;
+            const res = await fetch("https://api.tavily.com/search", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                api_key: tavKey,
+                query: finalQuery,
+                search_depth: "basic",
+                max_results: 3
+              })
             });
+            if (res.ok) {
+              const d = (await res.json()) as any;
+              return d.results || [];
+            }
+          } catch (e) {
+            console.error(`[JOB PROCESSOR] [WEB_SEARCH] Tavily query fail for ${queryStr}`, e);
+          }
+          return [];
+        };
 
-            const synthesisPrompt = `You are Plack's Head of Research. We are analyzing: "${userPrompt}".
+        for (let i = 0; i < searchQueries.length; i++) {
+          const currentQuery = searchQueries[i];
+          await sendChunk({ 
+            researchStatus: `Searching index database for: "${currentQuery.substring(0, 35)}..." (${i+1}/${searchQueries.length})` 
+          });
+
+          let results: any[] = [];
+          const hasPreferredDomains = preferredDomains && preferredDomains.length > 0;
+
+          if (hasPreferredDomains) {
+            const domainResults = await searchTavily(currentQuery, true);
+            results.push(...domainResults);
+          }
+
+          if (deepResearchWebSearch && (!hasPreferredDomains || results.length < 3)) {
+            const generalResults = await searchTavily(currentQuery, false);
+            const existingUrls = new Set(results.map((r: any) => r.url));
+            generalResults.forEach((r: any) => {
+              if (!existingUrls.has(r.url)) {
+                results.push(r);
+              }
+            });
+          }
+
+          results.forEach((r: any) => {
+            searchSources.push({
+              title: r.title,
+              url: r.url,
+              content: r.content
+            });
+          });
+        }
+
+        if (searchSources.length === 0 && deepResearchWebSearch) {
+          const fallbackResults = await searchTavily(userPrompt, false);
+          fallbackResults.forEach((r: any) => {
+            searchSources.push({
+              title: r.title,
+              url: r.url,
+              content: r.content
+            });
+          });
+        }
+
+        if (searchSources.length > 0) {
+          await sendChunk({ sources: searchSources });
+        }
+
+        await sendChunk({ 
+          researchTimeline: timeline, 
+          activeStageIndex: 3, 
+          researchStatus: "Cross-referencing resources and identifying critical conflicts..." 
+        });
+
+        let sourcesContext = "COORDINATED SOURCES:\n\n";
+        searchSources.forEach((src, idx) => {
+          sourcesContext += `[Source ${idx+1}]\nTitle: ${src.title}\nURL: ${src.url}\nContent: ${src.content}\n\n`;
+        });
+
+        const synthesisPrompt = `You are Plack's Head of Research. We are analyzing: "${userPrompt}".
 Below are our gathered sources:\n\n${sourcesContext}\n\n
 Perform a meticulous step-by-step comparative analysis. Locate contradictions, complementary insights, or factual gaps.
 Express your thoughts and synthesis steps out loud.`;
 
-            const synthStream = await ai.models.generateContentStream({
-              model: "models/gemini-3.1-flash-lite-preview",
-              contents: [{ role: 'user', parts: [{ text: synthesisPrompt }] }],
-              config: { temperature: 0.5 }
-            });
+        const synthStream = await ai.models.generateContentStream({
+          model: "models/gemini-3.1-flash-lite-preview",
+          contents: [{ role: 'user', parts: [{ text: synthesisPrompt }] }],
+          config: { temperature: 0.5 }
+        });
 
-            let draftSynthesis = "";
-            for await (const chunk of synthStream) {
-              const text = chunk.candidates?.[0]?.content?.parts?.[0]?.text || "";
-              draftSynthesis += text;
-              controller.enqueue(encoder.encode(JSON.stringify({ thought: text }) + "\n"));
-            }
+        let draftSynthesis = "";
+        for await (const chunk of synthStream) {
+          const text = chunk.candidates?.[0]?.content?.parts?.[0]?.text || "";
+          draftSynthesis += text;
+          await sendChunk({ thought: text });
+        }
 
-            controller.enqueue(encoder.encode(JSON.stringify({ 
-              researchTimeline: timeline, 
-              activeStageIndex: 4, 
-              researchStatus: "Running fact auditing algorithms..." 
-            }) + "\n"));
+        await sendChunk({ 
+          researchTimeline: timeline, 
+          activeStageIndex: 4, 
+          researchStatus: "Running fact auditing algorithms..." 
+        });
 
-            const verificationPrompt = `You are Plack's Principal Quality Verifier. 
+        const verificationPrompt = `You are Plack's Principal Quality Verifier. 
 Review the drafted analysis below against the original source materials.
 
 Original materials:\n${sourcesContext.substring(0, 4000)}
@@ -1396,26 +1589,26 @@ Evaluate and audit:
 3. Citations correctness
 Provide your comprehensive critique and thoughts out loud.`;
 
-            const verifyStream = await ai.models.generateContentStream({
-              model: "models/gemini-3.1-flash-lite-preview",
-              contents: [{ role: 'user', parts: [{ text: verificationPrompt }] }],
-              config: { temperature: 0.3 }
-            });
+        const verifyStream = await ai.models.generateContentStream({
+          model: "models/gemini-3.1-flash-lite-preview",
+          contents: [{ role: 'user', parts: [{ text: verificationPrompt }] }],
+          config: { temperature: 0.3 }
+        });
 
-            let peerReview = "";
-            for await (const chunk of verifyStream) {
-              const text = chunk.candidates?.[0]?.content?.parts?.[0]?.text || "";
-              peerReview += text;
-              controller.enqueue(encoder.encode(JSON.stringify({ thought: text }) + "\n"));
-            }
+        let peerReview = "";
+        for await (const chunk of verifyStream) {
+          const text = chunk.candidates?.[0]?.content?.parts?.[0]?.text || "";
+          peerReview += text;
+          await sendChunk({ thought: text });
+        }
 
-            controller.enqueue(encoder.encode(JSON.stringify({ 
-              researchTimeline: timeline, 
-              activeStageIndex: 5, 
-              researchStatus: "Synthesizing critique and compiling publication-quality document..." 
-            }) + "\n"));
+        await sendChunk({ 
+          researchTimeline: timeline, 
+          activeStageIndex: 5, 
+          researchStatus: "Synthesizing critique and compiling publication-quality document..." 
+        });
 
-            const compilerPrompt = `You are Plack's Editorial Director. Compile the definitive public-facing research document based on:
+        const compilerPrompt = `You are Plack's Editorial Director. Compile the definitive public-facing research document based on:
 
 Query: "${userPrompt}"
 Sources: \n${sourcesContext}
@@ -1439,419 +1632,676 @@ Synthesize the materials. Structure your response EXACTLY into the following mar
 # Limitations
 [Document unresolved conflicts or gaps]`;
 
-            const compilerStream = await ai.models.generateContentStream({
-              model: "models/gemini-3.1-flash-lite-preview",
-              contents: [{ role: 'user', parts: [{ text: compilerPrompt }] }],
-              config: { temperature: 0.4 }
-            });
-
-            for await (const chunk of compilerStream) {
-              const text = chunk.candidates?.[0]?.content?.parts?.[0]?.text || "";
-              controller.enqueue(encoder.encode(JSON.stringify({ text: text }) + "\n"));
-            }
-
-            controller.enqueue(encoder.encode(JSON.stringify({ 
-              researchTimeline: timeline, 
-              activeStageIndex: 7, 
-              researchStatus: "Deep Research analysis pipeline complete." 
-            }) + "\n"));
-
-          } catch (err: any) {
-            console.error("[DEEP RESEARCH STREAM FAILS]", err);
-            controller.enqueue(encoder.encode(JSON.stringify({ error: err.message || "Deep Research stream error" }) + "\n"));
-          } finally {
-            controller.close();
-          }
-        }
-      });
-
-      return new Response(customReadableStream, {
-        headers: {
-          'Content-Type': 'text/plain; charset=utf-8',
-          'Cache-Control': 'no-cache, no-transform',
-          'Connection': 'keep-alive',
-        },
-      });
-    }
-
-    let finalUseWebSearch = useWebSearch;
-    const lastUserMessage = messages[messages.length - 1];
-    let queryForSearch = "";
-    if (lastUserMessage) {
-      if (typeof lastUserMessage.content === 'string' && lastUserMessage.content) {
-        queryForSearch = lastUserMessage.content;
-      } else if (lastUserMessage.parts && Array.isArray(lastUserMessage.parts)) {
-        const textPart = lastUserMessage.parts.find((p: any) => p.text && typeof p.text === 'string');
-        if (textPart) queryForSearch = textPart.text;
-      }
-    }
-
-    if (!finalUseWebSearch && queryForSearch && !isDeepResearch) {
-      try {
-        const classifyPrompt = `Based on the following query, determine if a web search is required to provide an accurate response.
-Query: "${queryForSearch}"
-Respond with a JSON object: { "requiresSearch": boolean }`;
-        const classifyRes = await ai.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: [{ role: 'user', parts: [{ text: classifyPrompt }] }],
-          config: { responseMimeType: "application/json" }
+        const compilerStream = await ai.models.generateContentStream({
+          model: "models/gemini-3.1-flash-lite-preview",
+          contents: [{ role: 'user', parts: [{ text: compilerPrompt }] }],
+          config: { temperature: 0.4 }
         });
-        const classifyData = JSON.parse(classifyRes.text || "{}");
-        if (classifyData.requiresSearch === true) {
-          finalUseWebSearch = true;
-          console.log("[WEB_SEARCH_CLASSIFIER] Auto-activated Web Search.");
+
+        for await (const chunk of compilerStream) {
+          const text = chunk.candidates?.[0]?.content?.parts?.[0]?.text || "";
+          await sendChunk({ text: text });
         }
-      } catch (err) {
-        console.warn("[WEB_SEARCH_CLASSIFIER] Classification failed, continuing normal flow.");
-      }
-    }
 
-    let searchSources: any[] = [];
+        await sendChunk({ 
+          researchTimeline: timeline, 
+          activeStageIndex: 7, 
+          researchStatus: "Deep Research analysis pipeline complete." 
+        });
 
-    if (finalUseWebSearch) {
-      if (!c.env.TAVILY_API_KEY) {
-        console.error("[ERROR] Web Search API key missing");
       } else {
+        // --- STANDARD CHAT GENERATION MODE ---
+        let finalUseWebSearch = useWebSearch;
         const lastUserMessage = messages[messages.length - 1];
-        let query = "";
+        let queryForSearch = "";
         if (lastUserMessage) {
           if (typeof lastUserMessage.content === 'string' && lastUserMessage.content) {
-            query = lastUserMessage.content;
+            queryForSearch = lastUserMessage.content;
           } else if (lastUserMessage.parts && Array.isArray(lastUserMessage.parts)) {
             const textPart = lastUserMessage.parts.find((p: any) => p.text && typeof p.text === 'string');
-            if (textPart) {
-              query = textPart.text;
-            }
+            if (textPart) queryForSearch = textPart.text;
           }
         }
 
-        if (query) {
+        if (!finalUseWebSearch && queryForSearch) {
           try {
-            const tavilyRes = await fetch("https://api.tavily.com/search", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                api_key: c.env.TAVILY_API_KEY,
-                query: query,
-                search_depth: "basic",
-                max_results: 5,
-                include_answer: false,
-                include_images: false,
-                include_raw_content: false
-              })
+            const classifyPrompt = `Based on the following query, determine if a web search is required to provide an accurate response.
+Query: "${queryForSearch}"
+Respond with a JSON object: { "requiresSearch": boolean }`;
+            const classifyRes = await ai.models.generateContent({
+              model: "gemini-3.5-flash",
+              contents: [{ role: 'user', parts: [{ text: classifyPrompt }] }],
+              config: { responseMimeType: "application/json" }
             });
-
-            if (!tavilyRes.ok) {
-               throw new Error(`Tavily API failed with status ${tavilyRes.status}`);
-            }
-            
-            const tavilyData = (await tavilyRes.json()) as any;
-            const results = tavilyData.results || [];
-            
-            searchSources = results.map((r: any) => ({
-              title: r.title,
-              url: r.url,
-              content: r.content
-            }));
-            
-            if (searchSources.length > 0) {
-              let contextStr = "WEB SEARCH RESULTS:\n\n";
-              searchSources.forEach((src: any, i: number) => {
-                contextStr += `[Source ${i + 1}]\nTitle: ${src.title}\nURL: ${src.url}\nContent: ${src.content}\n\n`;
-              });
-              contextStr += `User Question:\n${query}\n\n(Base your answer primarily on the Web Search Results above if relevant. Ensure you cite your facts.)`;
-              
-              if (lastUserMessage.parts && Array.isArray(lastUserMessage.parts)) {
-                const textPartIndex = lastUserMessage.parts.findIndex((p: any) => p.text && typeof p.text === 'string');
-                if (textPartIndex !== -1) {
-                  lastUserMessage.parts[textPartIndex].text = contextStr;
-                } else {
-                  lastUserMessage.parts.push({ text: contextStr });
-                }
-              } else {
-                lastUserMessage.content = contextStr;
-              }
-            }
-          } catch (err: any) {
-            console.error("[TAVILY ERROR]", err);
-          }
-        }
-      }
-    }
-  
-    const isDocIntent = detectDocumentTrigger(userText);
-    
-    let currentMemoriesForClassification: any[] = [];
-    if (userId) {
-      try {
-        currentMemoriesForClassification = await getMemories(userId);
-      } catch (err) {}
-    }
-
-    const classification = await classifyMemory(userText, currentMemoriesForClassification, "", [
-      c.env.MY_GEMINI_API_KEY,
-      c.env.MY_GEMINI_API_KEY_2,
-      c.env.GEMINI_API_KEY
-    ]);
-    
-    const isMemoryIntent = !!(
-      classification && 
-      ['MEMORY_ADD', 'MEMORY_UPDATE', 'MEMORY_DELETE'].includes(classification.intent) && 
-      classification.confidence >= 0.90
-    );
-
-    let savedMemoryPayload: any = null;
-    let memoryReviewNeeded: any = null;
-    let memoryUpdateNeeded: any = null;
-    let memoryDeleteNeeded: any = null;
-    let isMemoryLimitReached = false;
-    let isMemorySaveFailed = false;
-
-    if (isMemoryIntent && userId && classification) {
-      try {
-        if (classification.intent === 'MEMORY_UPDATE' && classification.targetMemoryId) {
-          let oldContent = "";
-          try {
-            const supabase = createAdminClient();
-            const { data: memData } = await supabase
-              .from('memories')
-              .select('content')
-              .eq('id', classification.targetMemoryId)
-              .single();
-            if (memData) {
-              oldContent = memData.content;
+            const classifyData = JSON.parse(classifyRes.text || "{}");
+            if (classifyData.requiresSearch === true) {
+              finalUseWebSearch = true;
+              console.log("[JOB PROCESSOR] [WEB_SEARCH_CLASSIFIER] Auto-activated Web Search.");
             }
           } catch (err) {
-            console.error("[MEMORY UPDATE FETCH ERROR]", err);
+            console.warn("[JOB PROCESSOR] [WEB_SEARCH_CLASSIFIER] Classification failed, continuing normal flow.");
           }
-          
-          memoryUpdateNeeded = {
-            targetMemoryId: classification.targetMemoryId,
-            oldContent: oldContent || "Unknown memory content",
-            newContent: classification.memory,
-            category: classification.category
-          };
-        } else if (classification.intent === 'MEMORY_DELETE' && classification.targetMemoryId) {
-          let content = "";
-          try {
-            const supabase = createAdminClient();
-            const { data: memData } = await supabase
-              .from('memories')
-              .select('content')
-              .eq('id', classification.targetMemoryId)
-              .single();
-            if (memData) {
-              content = memData.content;
-            }
-          } catch (err) {
-            console.error("[MEMORY DELETE FETCH ERROR]", err);
-          }
-          
-          memoryDeleteNeeded = {
-            targetMemoryId: classification.targetMemoryId,
-            content: content || "Unknown memory content",
-            category: classification.category
-          };
-        } else if (classification.intent === 'MEMORY_ADD') {
-          memoryReviewNeeded = {
-            category: classification.category,
-            content: classification.memory,
-            summary: classification.memory
-          };
         }
-      } catch (err) {
-        console.error("[MEMORY REDESIGN PROCESSING FAILED]", err);
-      }
-    }
 
-    const systemPromptConfig = getSystemPrompt(model);
-    let baseInstruction = systemPromptConfig.prompt;
+        let searchSources: any[] = [];
 
-    if (isMemoryIntent) {
-      baseInstruction += "\n\nCRITICAL CONTEXT: The user wants to store, update, or remove a preference/detail. A proposal has been generated for validation. You are STRICTLY FORBIDDEN from generating any `<document>` or `</document>` tags. Under no context should you create documents, workspaces, or canvas elements.";
-      if (memoryReviewNeeded || memoryUpdateNeeded || memoryDeleteNeeded) {
-        baseInstruction += `\n\nPROPOSAL SHOWN: A proposal has been generated on screen for the user to 'Accept' or 'Reject'. Respond naturally confirming you see their request but do NOT state it is saved yet (e.g. 'I see you want to remember that. Please confirm the memory prompt below so I can save it!')`;
-      }
-      baseInstruction += "\nChoose standard human dialog, short and natural.";
-    } else if (classification && ['MEMORY_ADD', 'MEMORY_UPDATE', 'MEMORY_DELETE'].includes(classification.intent) && classification.confidence < 0.90) {
-      baseInstruction += `\n\nCLARIFICATION REQUIRED: The user mentioned a memory-type action, but confidence is low. Do NOT update memories or trigger proposals. Instead, ask the user for clarification.`;
-    }
-
-    if (profileSummary && Object.keys(profileSummary).length > 0) {
-      baseInstruction += `\n\nADAPTIVE USER PROFILE SUMMARY (Use this implicitly to shape your response style without mentioning it. Do not store these as memories):
-      ${profileSummary?.writingStyle ? `- Writing Style: ${profileSummary.writingStyle}` : ''}
-      ${profileSummary?.preferredUI ? `- Preferred UI Style: ${profileSummary.preferredUI}` : ''}
-      ${profileSummary?.recurringInterests ? `- Recurring Interests: ${profileSummary.recurringInterests}` : ''}
-      ${profileSummary?.commonProjects ? `- Common Projects: ${profileSummary.commonProjects}` : ''}`;
-    }
-
-    // 1. Current Date & Time Awareness
-    const now = new Date();
-    const timeZone = payload.timezone || 'UTC';
-    
-    let localDate = '';
-    let localTime = '';
-    let dayOfWeek = '';
-    
-    try {
-      localDate = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
-      localTime = new Intl.DateTimeFormat('en-US', { timeZone, hour: '2-digit', minute: '2-digit', hour12: false }).format(now);
-      dayOfWeek = new Intl.DateTimeFormat('en-US', { timeZone, weekday: 'long' }).format(now);
-    } catch (e) {
-      localDate = now.toISOString().split('T')[0];
-      localTime = now.toISOString().split('T')[1].substring(0, 5) + ' UTC';
-      dayOfWeek = 'Unknown';
-    }
-
-    baseInstruction += `\n\n=== RUNTIME CONTEXT ===\n` +
-      `Current UTC Time: ${now.toISOString()}\n` +
-      `User Timezone: ${timeZone}\n` +
-      `Local Date: ${localDate}\n` +
-      `Local Time: ${localTime}\n` +
-      `Day of Week: ${dayOfWeek}\n` +
-      `Always calculate relative dates (e.g., "tomorrow", "next tuesday") based on this runtime date. Never hallucinate past dates or use placeholder dates.`;
-
-    const systemInstruction = systemInstructionOverride 
-      ? `${memoryContext}${baseInstruction}\n${systemInstructionOverride}`
-      : `${memoryContext}${baseInstruction}`;
-
-
-    const config: any = {
-      systemInstruction,
-      temperature: 0.7,
-    };
-
-    let currentContents: any[] = [...contents];
-
-    const customReadableStream = new ReadableStream({
-      async start(controller) {
-        try {
-          if (memoriesUsedCount > 0) {
-            controller.enqueue(encoder.encode(JSON.stringify({ 
-              memoriesUsedCount,
-              memoriesUsed: memoriesUsedList,
-              isManualMemories: activeMemories && activeMemories.length > 0
-            }) + "\n"));
-          }
-          if (memoryUpdateNeeded) {
-            controller.enqueue(encoder.encode(JSON.stringify({ memoryUpdateNeeded }) + "\n"));
-          }
-          if (memoryDeleteNeeded) {
-            controller.enqueue(encoder.encode(JSON.stringify({ memoryDeleteNeeded }) + "\n"));
-          }
-          if (profileSummary) {
-            controller.enqueue(encoder.encode(JSON.stringify({ profileSummary }) + "\n"));
-          }
-          if (searchSources && searchSources.length > 0) {
-             controller.enqueue(encoder.encode(JSON.stringify({ sources: searchSources }) + "\n"));
-          }
-          if (savedMemoryPayload) {
-             controller.enqueue(encoder.encode(JSON.stringify({ memorySaved: savedMemoryPayload }) + "\n"));
-          }
-          if (memoryReviewNeeded) {
-             controller.enqueue(encoder.encode(JSON.stringify({ memoryReviewNeeded }) + "\n"));
-          }
-          if (isMemoryLimitReached) {
-             controller.enqueue(encoder.encode(JSON.stringify({ memoryLimitReached: true }) + "\n"));
-          }
-          if (isMemorySaveFailed) {
-             controller.enqueue(encoder.encode(JSON.stringify({ memorySaveFailed: true }) + "\n"));
-          }
-
-          const stream = await ai.models.generateContentStream({
-            model: model,
-            contents: currentContents,
-            config: config
-          });
-
-          let hasSentGrounding = false;
-          let isFirstToken = true;
-          for await (const chunk of stream) {
-            if (isFirstToken) {
-              isFirstToken = false;
-            }
-            const candidate = chunk.candidates?.[0];
-            
-            if (candidate?.groundingMetadata && !hasSentGrounding) {
-              hasSentGrounding = true;
-              if (isClientConnected) {
-                controller.enqueue(encoder.encode(JSON.stringify({ groundingMetadata: candidate.groundingMetadata }) + "\n"));
-              }
-            }
-
-            const parts = candidate?.content?.parts;
-            if (parts && parts.length > 0) {
-              for (const part of parts) {
-                if (part.thought === true && part.text) {
-                  if (isClientConnected) {
-                    controller.enqueue(encoder.encode(JSON.stringify({ thought: part.text }) + "\n"));
-                  }
-                } else if (part.thought && typeof part.thought === 'string') {
-                  if (isClientConnected) {
-                    controller.enqueue(encoder.encode(JSON.stringify({ thought: part.thought }) + "\n"));
-                  }
-                } else if (part.text) {
-                  fullResponseText += part.text;
-                  if (isClientConnected) {
-                    controller.enqueue(encoder.encode(JSON.stringify({ text: part.text }) + "\n"));
-                  }
+        if (finalUseWebSearch) {
+          const tavKey = this.envBindings.TAVILY_API_KEY || process.env.TAVILY_API_KEY;
+          if (!tavKey) {
+            console.error("[JOB PROCESSOR] [ERROR] Web Search API key missing");
+          } else {
+            const lastUserMessage = messages[messages.length - 1];
+            let query = "";
+            if (lastUserMessage) {
+              if (typeof lastUserMessage.content === 'string' && lastUserMessage.content) {
+                query = lastUserMessage.content;
+              } else if (lastUserMessage.parts && Array.isArray(lastUserMessage.parts)) {
+                const textPart = lastUserMessage.parts.find((p: any) => p.text && typeof p.text === 'string');
+                if (textPart) {
+                  query = textPart.text;
                 }
               }
             }
-          }
-          
-          if (chatId) {
-            try {
-              const supabase = createAdminClient();
-              const { error: saveErr } = await supabase
-                .from('messages')
-                .insert({
-                  id: messageId,
-                  chat_id: chatId,
-                  role: 'model',
-                  content: fullResponseText
+
+            if (query) {
+              try {
+                const tavilyRes = await fetch("https://api.tavily.com/search", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    api_key: tavKey,
+                    query: query,
+                    search_depth: "basic",
+                    max_results: 5,
+                    include_answer: false,
+                    include_images: false,
+                    include_raw_content: false
+                  })
                 });
-              
-              if (!saveErr) {
-                await supabase
-                  .from('chats')
-                  .update({ updated_at: new Date().toISOString() })
-                  .eq('id', chatId);
+
+                if (!tavilyRes.ok) {
+                  throw new Error(`Tavily API failed with status ${tavilyRes.status}`);
+                }
+                
+                const tavilyData = (await tavilyRes.json()) as any;
+                const results = tavilyData.results || [];
+                
+                searchSources = results.map((r: any) => ({
+                  title: r.title,
+                  url: r.url,
+                  content: r.content
+                }));
+                
+                if (searchSources.length > 0) {
+                  let contextStr = "WEB SEARCH RESULTS:\n\n";
+                  searchSources.forEach((src: any, i: number) => {
+                    contextStr += `[Source ${i + 1}]\nTitle: ${src.title}\nURL: ${src.url}\nContent: ${src.content}\n\n`;
+                  });
+                  contextStr += `User Question:\n${query}\n\n(Base your answer primarily on the Web Search Results above if relevant. Ensure you cite your facts.)`;
+                  
+                  if (lastUserMessage.parts && Array.isArray(lastUserMessage.parts)) {
+                    const textPartIndex = lastUserMessage.parts.findIndex((p: any) => p.text && typeof p.text === 'string');
+                    if (textPartIndex !== -1) {
+                      lastUserMessage.parts[textPartIndex].text = contextStr;
+                    } else {
+                      lastUserMessage.parts.push({ text: contextStr });
+                    }
+                  } else {
+                    lastUserMessage.content = contextStr;
+                  }
+                }
+              } catch (err: any) {
+                console.error("[JOB PROCESSOR] [TAVILY ERROR]", err);
               }
-            } catch (dbErr) {
-              console.error("[DATABASE] Exception saving background generation", dbErr);
             }
           }
+        }
+      
+        const isDocIntent = detectDocumentTrigger(userText);
+        
+        let currentMemoriesForClassification: any[] = [];
+        if (userId) {
+          try {
+            currentMemoriesForClassification = await getMemories(userId);
+          } catch (err) {}
+        }
 
-        } catch (error: any) {
-          console.error(`[STREAM FAILED]`, error?.message);
-          if (isClientConnected) {
-            controller.enqueue(encoder.encode(JSON.stringify({ error: error.message || "Stream error" }) + "\n"));
-          }
-        } finally {
-          if (isClientConnected) {
-            controller.close();
+        const classification = await classifyMemory(userText, currentMemoriesForClassification, "", keysToUse);
+        
+        const isMemoryIntent = !!(
+          classification && 
+          ['MEMORY_ADD', 'MEMORY_UPDATE', 'MEMORY_DELETE'].includes(classification.intent) && 
+          classification.confidence >= 0.90
+        );
+
+        let savedMemoryPayload: any = null;
+        let memoryReviewNeeded: any = null;
+        let memoryUpdateNeeded: any = null;
+        let memoryDeleteNeeded: any = null;
+        let isMemoryLimitReached = false;
+        let isMemorySaveFailed = false;
+
+        if (isMemoryIntent && userId && classification) {
+          try {
+            if (classification.intent === 'MEMORY_UPDATE' && classification.targetMemoryId) {
+              let oldContent = "";
+              try {
+                const { data: memData } = await supabase
+                  .from('memories')
+                  .select('content')
+                  .eq('id', classification.targetMemoryId)
+                  .single();
+                if (memData) {
+                  oldContent = memData.content;
+                }
+              } catch (err) {
+                console.error("[JOB PROCESSOR] [MEMORY UPDATE FETCH ERROR]", err);
+              }
+              
+              memoryUpdateNeeded = {
+                targetMemoryId: classification.targetMemoryId,
+                oldContent: oldContent || "Unknown memory content",
+                newContent: classification.memory,
+                category: classification.category
+              };
+            } else if (classification.intent === 'MEMORY_DELETE' && classification.targetMemoryId) {
+              let content = "";
+              try {
+                const { data: memData } = await supabase
+                  .from('memories')
+                  .select('content')
+                  .eq('id', classification.targetMemoryId)
+                  .single();
+                if (memData) {
+                  content = memData.content;
+                }
+              } catch (err) {
+                console.error("[JOB PROCESSOR] [MEMORY DELETE FETCH ERROR]", err);
+              }
+              
+              memoryDeleteNeeded = {
+                targetMemoryId: classification.targetMemoryId,
+                content: content || "Unknown memory content",
+                category: classification.category
+              };
+            } else if (classification.intent === 'MEMORY_ADD') {
+              memoryReviewNeeded = {
+                category: classification.category,
+                content: classification.memory,
+                summary: classification.memory
+              };
+            }
+          } catch (err) {
+            console.error("[JOB PROCESSOR] [MEMORY REDESIGN PROCESSING FAILED]", err);
           }
         }
-      },
-      cancel() {
-        isClientConnected = false;
-      }
-    });
 
-    return new Response(customReadableStream, {
-      headers: {
-        'Content-Type': 'text/plain; charset=utf-8',
-        'Cache-Control': 'no-cache, no-transform',
-        'Connection': 'keep-alive',
-        'X-Content-Type-Options': 'nosniff',
-      },
-    });
+        const systemPromptConfig = getSystemPrompt(model);
+        let baseInstruction = systemPromptConfig.prompt;
+
+        if (isMemoryIntent) {
+          baseInstruction += "\n\nCRITICAL CONTEXT: The user wants to store, update, or remove a preference/detail. A proposal has been generated for validation. You are STRICTLY FORBIDDEN from generating any `<document>` or `</document>` tags. Under no context should you create documents, workspaces, or canvas elements.";
+          if (memoryReviewNeeded || memoryUpdateNeeded || memoryDeleteNeeded) {
+            baseInstruction += `\n\nPROPOSAL SHOWN: A proposal has been generated on screen for the user to 'Accept' or 'Reject'. Respond naturally confirming you see their request but do NOT state it is saved yet (e.g. 'I see you want to remember that. Please confirm the memory prompt below so I can save it!')`;
+          }
+          baseInstruction += "\nChoose standard human dialog, short and natural.";
+        } else if (classification && ['MEMORY_ADD', 'MEMORY_UPDATE', 'MEMORY_DELETE'].includes(classification.intent) && classification.confidence < 0.90) {
+          baseInstruction += `\n\nCLARIFICATION REQUIRED: The user mentioned a memory-type action, but confidence is low. Do NOT update memories or trigger proposals. Instead, ask the user for clarification.`;
+        }
+
+        if (profileSummary && Object.keys(profileSummary).length > 0) {
+          baseInstruction += `\n\nADAPTIVE USER PROFILE SUMMARY (Use this implicitly to shape your response style without mentioning it. Do not store these as memories):
+          ${profileSummary?.writingStyle ? `- Writing Style: ${profileSummary.writingStyle}` : ''}
+          ${profileSummary?.preferredUI ? `- Preferred UI Style: ${profileSummary.preferredUI}` : ''}
+          ${profileSummary?.recurringInterests ? `- Recurring Interests: ${profileSummary.recurringInterests}` : ''}
+          ${profileSummary?.commonProjects ? `- Common Projects: ${profileSummary.commonProjects}` : ''}`;
+        }
+
+        // Current Date & Time Awareness
+        const now = new Date();
+        const timeZone = payload.timezone || 'UTC';
+        
+        let localDate = '';
+        let localTime = '';
+        let dayOfWeek = '';
+        
+        try {
+          localDate = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
+          localTime = new Intl.DateTimeFormat('en-US', { timeZone, hour: '2-digit', minute: '2-digit', hour12: false }).format(now);
+          dayOfWeek = new Intl.DateTimeFormat('en-US', { timeZone, weekday: 'long' }).format(now);
+        } catch (e) {
+          localDate = now.toISOString().split('T')[0];
+          localTime = now.toISOString().split('T')[1].substring(0, 5) + ' UTC';
+          dayOfWeek = 'Unknown';
+        }
+
+        baseInstruction += `\n\n=== RUNTIME CONTEXT ===\n` +
+          `Current UTC Time: ${now.toISOString()}\n` +
+          `User Timezone: ${timeZone}\n` +
+          `Local Date: ${localDate}\n` +
+          `Local Time: ${localTime}\n` +
+          `Day of Week: ${dayOfWeek}\n` +
+          `Always calculate relative dates (e.g., "tomorrow", "next tuesday") based on this runtime date. Never hallucinate past dates or use placeholder dates.`;
+
+        const systemInstruction = systemInstructionOverride 
+          ? `${memoryContext}${baseInstruction}\n${systemInstructionOverride}`
+          : `${memoryContext}${baseInstruction}`;
+
+        const config: any = {
+          systemInstruction,
+          temperature: 0.7,
+        };
+
+        if (memoriesUsedCount > 0) {
+          await sendChunk({ 
+            memoriesUsedCount,
+            memoriesUsed: memoriesUsedList,
+            isManualMemories: activeMemories && activeMemories.length > 0
+          });
+        }
+        if (memoryUpdateNeeded) {
+          await sendChunk({ memoryUpdateNeeded });
+        }
+        if (memoryDeleteNeeded) {
+          await sendChunk({ memoryDeleteNeeded });
+        }
+        if (profileSummary) {
+          await sendChunk({ profileSummary });
+        }
+        if (searchSources && searchSources.length > 0) {
+          await sendChunk({ sources: searchSources });
+        }
+        if (savedMemoryPayload) {
+          await sendChunk({ memorySaved: savedMemoryPayload });
+        }
+        if (memoryReviewNeeded) {
+          await sendChunk({ memoryReviewNeeded });
+        }
+        if (isMemoryLimitReached) {
+          await sendChunk({ memoryLimitReached: true });
+        }
+        if (isMemorySaveFailed) {
+          await sendChunk({ memorySaveFailed: true });
+        }
+
+        const stream = await ai.models.generateContentStream({
+          model: model,
+          contents: contents,
+          config: config
+        });
+
+        let hasSentGrounding = false;
+        for await (const chunk of stream) {
+          const candidate = chunk.candidates?.[0];
+          
+          if (candidate?.groundingMetadata && !hasSentGrounding) {
+            hasSentGrounding = true;
+            await sendChunk({ groundingMetadata: candidate.groundingMetadata });
+          }
+
+          const parts = candidate?.content?.parts;
+          if (parts && parts.length > 0) {
+            for (const part of parts) {
+              if (part.thought === true && part.text) {
+                await sendChunk({ thought: part.text });
+              } else if (part.thought && typeof part.thought === 'string') {
+                await sendChunk({ thought: part.thought });
+              } else if (part.text) {
+                await sendChunk({ text: part.text });
+              }
+            }
+          }
+        }
+      }
+
+      // Clear any pending DB timers and write the final output
+      if (dbBatchTimer) {
+        clearTimeout(dbBatchTimer);
+      }
+
+      // --- PERSIST SUCCESSFUL MESSAGE ---
+      if (job.chat_id) {
+        try {
+          const { error: saveErr } = await supabase
+            .from('messages')
+            .upsert({
+              id: job.message_id,
+              chat_id: job.chat_id,
+              role: 'model',
+              content: fullResponseText
+            });
+          
+          if (!saveErr) {
+            await supabase
+              .from('chats')
+              .update({ updated_at: new Date().toISOString() })
+              .eq('id', job.chat_id);
+          } else {
+            console.error("[JOB PROCESSOR] [DATABASE] Error upserting final message", saveErr);
+          }
+        } catch (dbErr) {
+          console.error("[JOB PROCESSOR] [DATABASE] Exception saving background generation", dbErr);
+        }
+      }
+
+      // Complete job
+      job.status = 'completed';
+      job.final_output = fullResponseText;
+      job.completed_at = new Date().toISOString();
+      job.updated_at = new Date().toISOString();
+      
+      if (usingDb) {
+        await supabase
+          .from('ai_generation_jobs')
+          .update({ 
+            status: 'completed', 
+            final_output: fullResponseText, 
+            completed_at: job.completed_at,
+            updated_at: job.updated_at
+          })
+          .eq('id', job.id);
+      } else {
+        inMemoryJobs.set(job.id, { ...job });
+      }
+
+      console.log(`[JOB PROCESSOR] [COMPLETED] Job ${job.id} done!`);
+      jobEventEmitter.emit(`update:${job.id}`, { status: 'completed', text: '' });
+
+    } catch (error: any) {
+      console.error(`[JOB PROCESSOR] [FAILED] Job ${job.id} failed:`, error?.message || error);
+      
+      if (dbBatchTimer) {
+        clearTimeout(dbBatchTimer);
+      }
+
+      job.status = 'failed';
+      job.error = error.message || "Generation error";
+      job.completed_at = new Date().toISOString();
+      job.updated_at = new Date().toISOString();
+
+      if (usingDb) {
+        await supabase
+          .from('ai_generation_jobs')
+          .update({ 
+            status: 'failed', 
+            error: job.error, 
+            completed_at: job.completed_at,
+            updated_at: job.updated_at
+          })
+          .eq('id', job.id);
+      } else {
+        inMemoryJobs.set(job.id, { ...job });
+      }
+
+      jobEventEmitter.emit(`update:${job.id}`, { error: job.error });
+    }
+  }
+}
+
+// Start background processor
+AIJobProcessor.init();
+
+// Main Chat queue endpoint
+app.post('/api/chat', async (c) => {
+  try {
+    const payload = await c.req.json();
+    const chatId = payload.chatId;
+    const model = payload.model || "models/gemini-3.1-flash-lite-preview";
+    const { messages, messageId, userId } = payload;
+
+    if (!messages || !Array.isArray(messages)) {
+      return c.json({ error: "Messages array is required" }, 400);
+    }
+
+    AIJobProcessor.captureEnv(c.env);
+
+    // Get the original prompt text from the last user message
+    const lastUserMessage = messages[messages.length - 1];
+    let userPrompt = "Generate content";
+    if (lastUserMessage) {
+      if (typeof lastUserMessage.content === 'string' && lastUserMessage.content) {
+        userPrompt = lastUserMessage.content;
+      } else if (lastUserMessage.parts && Array.isArray(lastUserMessage.parts)) {
+        const textPart = lastUserMessage.parts.find((p: any) => p.text && typeof p.text === 'string');
+        if (textPart) userPrompt = textPart.text;
+      }
+    }
+
+    // Clean up messageId (remove assistant- prefix to ensure a valid UUID)
+    const cleanMessageId = messageId && messageId.startsWith('assistant-')
+      ? messageId.substring(10)
+      : (messageId || crypto.randomUUID());
+
+    const jobId = crypto.randomUUID();
+
+    // Store in-memory
+    const newJob: Job = {
+      id: jobId,
+      user_id: userId || '',
+      chat_id: chatId || '',
+      message_id: cleanMessageId,
+      model: model,
+      prompt: userPrompt,
+      payload: payload,
+      status: 'queued',
+      progress: 0,
+      partial_output: '',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    inMemoryJobs.set(jobId, newJob);
+
+    // Try to write to database
+    const supabase = createAdminClient();
+    try {
+      const { error: dbErr } = await supabase
+        .from('ai_generation_jobs')
+        .insert({
+          id: jobId,
+          user_id: userId || null,
+          chat_id: chatId || null,
+          message_id: cleanMessageId,
+          model: model,
+          prompt: userPrompt,
+          payload: payload,
+          status: 'queued',
+          progress: 0,
+          partial_output: '',
+          created_at: newJob.created_at,
+          updated_at: newJob.updated_at
+        });
+      
+      if (dbErr) {
+        console.warn("[API/CHAT] Could not write job to db, using memory fallback:", dbErr.message);
+      }
+    } catch (e) {
+      // Table doesn't exist
+    }
+
+    // Trigger processing asynchronously
+    AIJobProcessor.trigger();
+
+    return c.json({ jobId, status: 'queued', messageId: cleanMessageId });
 
   } catch (error: any) {
-    console.error("[ERROR] GEMINI API ERROR", error?.message);
+    console.error("[ERROR] GEMINI QUEUE CHAT ERROR", error?.message);
     return c.json({ error: error.message || "Internal Server Error" }, 500);
   }
+});
+
+// Stream endpoint to stream tokens of background jobs in real-time
+app.get('/api/chat/stream', async (c) => {
+  const jobId = c.req.query('jobId');
+  if (!jobId) {
+    return c.json({ error: "jobId is required" }, 400);
+  }
+
+  AIJobProcessor.captureEnv(c.env);
+  const supabase = createAdminClient();
+  let job: Job | null = null;
+  try {
+    const { data } = await supabase
+      .from('ai_generation_jobs')
+      .select('*')
+      .eq('id', jobId)
+      .single();
+    if (data) {
+      job = data as Job;
+    }
+  } catch (e) {}
+
+  if (!job) {
+    job = inMemoryJobs.get(jobId) || null;
+  }
+
+  if (!job) {
+    return c.json({ error: "Job not found" }, 404);
+  }
+
+  return new Response(new ReadableStream({
+    async start(controller) {
+      const encoder = new TextEncoder();
+      const writeObj = (obj: any) => {
+        try {
+          controller.enqueue(encoder.encode(JSON.stringify(obj) + "\n"));
+        } catch (e) {}
+      };
+
+      // Catch up on any accumulated output so far
+      if (job.partial_output) {
+        writeObj({ text: job.partial_output });
+      }
+
+      if (job.status === 'completed') {
+        writeObj({ text: '' }); // finish
+        controller.close();
+        return;
+      }
+
+      if (job.status === 'failed') {
+        writeObj({ error: job.error || "Generation failed" });
+        controller.close();
+        return;
+      }
+
+      if (job.status === 'cancelled') {
+        writeObj({ error: "Generation cancelled" });
+        controller.close();
+        return;
+      }
+
+      // Subscribe to real-time events
+      const onUpdate = (update: any) => {
+        writeObj(update);
+      };
+
+      jobEventEmitter.on(`update:${jobId}`, onUpdate);
+
+      // Regularly poll job state in background to close connection when finished
+      const checkInterval = setInterval(async () => {
+        let currentJob: Job | null = null;
+        try {
+          const { data } = await supabase
+            .from('ai_generation_jobs')
+            .select('status, error')
+            .eq('id', jobId)
+            .single();
+          if (data) currentJob = data as Job;
+        } catch (e) {}
+
+        if (!currentJob) {
+          currentJob = inMemoryJobs.get(jobId) || null;
+        }
+
+        if (!currentJob || ['completed', 'failed', 'cancelled'].includes(currentJob.status)) {
+          clearInterval(checkInterval);
+          jobEventEmitter.off(`update:${jobId}`, onUpdate);
+          try {
+            controller.close();
+          } catch (e) {}
+        }
+      }, 1000);
+
+      // Handle abort
+      c.req.raw.signal?.addEventListener('abort', () => {
+        clearInterval(checkInterval);
+        jobEventEmitter.off(`update:${jobId}`, onUpdate);
+        try {
+          controller.close();
+        } catch (e) {}
+      });
+    }
+  }), {
+    headers: {
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'X-Content-Type-Options': 'nosniff',
+    }
+  });
+});
+
+// Endpoint to fetch active jobs for a chat (helps in UI recovery)
+app.get('/api/chat/active-jobs', async (c) => {
+  const chatId = c.req.query('chatId');
+  if (!chatId) {
+    return c.json({ error: "chatId is required" }, 400);
+  }
+
+  AIJobProcessor.captureEnv(c.env);
+  const supabase = createAdminClient();
+  let jobs: Job[] = [];
+  try {
+    const { data } = await supabase
+      .from('ai_generation_jobs')
+      .select('*')
+      .eq('chat_id', chatId)
+      .in('status', ['queued', 'running', 'streaming']);
+    if (data) {
+      jobs = data as Job[];
+    }
+  } catch (e) {}
+
+  // Merge with memory active jobs
+  const inMemoryActive = Array.from(inMemoryJobs.values())
+    .filter(j => j.chat_id === chatId && ['queued', 'running', 'streaming'].includes(j.status));
+
+  const combined = [...jobs];
+  inMemoryActive.forEach(imj => {
+    if (!combined.some(dbj => dbj.id === imj.id)) {
+      combined.push(imj);
+    }
+  });
+
+  return c.json(combined);
+});
+
+// Endpoint to fetch job details
+app.get('/api/chat/job/:id', async (c) => {
+  const jobId = c.req.param('id');
+  AIJobProcessor.captureEnv(c.env);
+  const supabase = createAdminClient();
+  let job: Job | null = null;
+  try {
+    const { data } = await supabase
+      .from('ai_generation_jobs')
+      .select('*')
+      .eq('id', jobId)
+      .single();
+    if (data) {
+      job = data as Job;
+    }
+  } catch (e) {}
+
+  if (!job) {
+    job = inMemoryJobs.get(jobId) || null;
+  }
+
+  if (!job) {
+    return c.json({ error: "Job not found" }, 404);
+  }
+
+  return c.json(job);
 });
 
 // 18. Runtime configuration endpoint

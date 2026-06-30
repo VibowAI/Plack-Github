@@ -18,6 +18,9 @@ interface InlineDocumentBlockProps {
   content: string;
   theme: 'light' | 'dark' | 'cosmic';
   isStreaming?: boolean;
+  isActiveEditor?: boolean;
+  onEditorOpen?: (isOpen: boolean) => void;
+  width?: number;
 }
 
 type HunkStatus = 'pending' | 'accepted' | 'rejected';
@@ -109,14 +112,20 @@ const UncontrolledEditor = ({ initialHtml, onChange, editorRef, className }: any
 
 // --- Main Component ---
 
-export default function InlineDocumentBlock({ id: docIdProp, userId, title, content: initialContent, theme, isStreaming }: InlineDocumentBlockProps) {
+export default function InlineDocumentBlock({ id: docIdProp, userId, title, content: initialContent, theme, isStreaming, isActiveEditor, onEditorOpen, width }: InlineDocumentBlockProps) {
   const renderCountRef = useRef(0);
   useEffect(() => {
     renderCountRef.current += 1;
     console.log('[RENDER COUNT]', renderCountRef.current);
   });
 
-  const [isEditing, setIsEditing] = useState(false);
+  const [isEditingState, setIsEditingState] = useState(false);
+  const isEditing = isActiveEditor !== undefined ? isActiveEditor : isEditingState;
+
+  const setIsEditing = (val: boolean) => {
+    setIsEditingState(val);
+    if (onEditorOpen) onEditorOpen(val);
+  };
   const [copied, setCopied] = useState(false);
   
   const [checkpoints, setCheckpoints] = useState<string[]>([initialContent]);
@@ -494,14 +503,16 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
       <AnimatePresence>
         {isEditing && (
           <>
-            {/* Backdrop for Editor */}
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={handleStopEditing}
-              className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[90]"
-            />
+            {/* Backdrop for Editor (Mobile Only) */}
+            {isMobile && (
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={handleStopEditing}
+                className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[90]"
+              />
+            )}
             
             <motion.div 
               initial={isMobile ? { y: '100%' } : { x: '100%' }}
@@ -509,12 +520,17 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
               exit={isMobile ? { y: '100%' } : { x: '100%' }}
               transition={{ type: 'spring', damping: 25, stiffness: 200 }}
               className={cn(
-                "flex flex-col border shadow-2xl select-text fixed z-[100] overflow-hidden",
+                "flex flex-col select-text fixed overflow-hidden z-[100]",
                 isMobile 
-                  ? "inset-0 rounded-t-[32px] border-none" 
-                  : "right-0 top-0 bottom-0 w-[65vw] max-w-[800px] rounded-l-[32px] border-l",
-                theme === 'light' ? "bg-white border-neutral-200" : "bg-neutral-950 border-neutral-800"
+                  ? "inset-0 border-none shadow-2xl" 
+                  : "right-0 top-0 bottom-0 border-l z-40 shadow-none rounded-none",
+                theme === 'light' 
+                  ? "bg-white border-neutral-200" 
+                  : (theme === 'cosmic' 
+                      ? "bg-[#06030f] border-indigo-500/10" 
+                      : "bg-neutral-950 border-neutral-800")
               )}
+              style={!isMobile ? { width: width || 380 } : undefined}
             >
               {/* Header with Save Status */}
               <div className={cn(
@@ -547,7 +563,7 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
                     </span>
                     <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest opacity-40">
                       {saveStatus === 'saving' && <span className="flex items-center gap-1"><Sparkles size={10} className="animate-spin" /> Saving...</span>}
-                      {saveStatus === 'saved' && <span className="flex items-center gap-1 text-emerald-500"><Check size={10} /> Saved</span>}
+                      {saveStatus === 'saved' && <span className="flex items-center gap-1 text-emerald-500"><Check size={10} /> Saved to Supabase</span>}
                       {saveStatus === 'failed' && <span className="flex items-center gap-1 text-rose-500">Failed</span>}
                       {saveStatus === 'idle' && <span>v{currentCheckpointIndex + 1}</span>}
                     </span>

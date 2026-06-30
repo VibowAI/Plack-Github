@@ -287,7 +287,54 @@ CREATE POLICY "Users can view own message_versions" ON public.message_versions F
 DROP POLICY IF EXISTS "Users can insert own message_versions" ON public.message_versions;
 CREATE POLICY "Users can insert own message_versions" ON public.message_versions FOR INSERT WITH CHECK (EXISTS (SELECT 1 FROM public.messages m JOIN public.chats c ON m.chat_id = c.id WHERE m.id = parent_message_id AND c.user_id = auth.uid()));
 
--- 14. RELOAD SCHEMA CACHE
+-- 14. AI GENERATION JOBS (ChatGPT-style Background Generation & Orchestrator)
+CREATE TABLE IF NOT EXISTS public.ai_generation_jobs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid REFERENCES public.profiles(id) ON DELETE CASCADE,
+  chat_id uuid REFERENCES public.chats(id) ON DELETE CASCADE,
+  message_id uuid,
+  model text,
+  prompt text,
+  payload jsonb DEFAULT '{}'::jsonb,
+  status text NOT NULL CHECK (status IN ('queued', 'running', 'streaming', 'completed', 'failed', 'cancelled')),
+  progress integer DEFAULT 0,
+  partial_output text DEFAULT '',
+  final_output text,
+  error text,
+  created_at timestamptz DEFAULT now() NOT NULL,
+  updated_at timestamptz DEFAULT now() NOT NULL,
+  completed_at timestamptz
+);
+
+-- Enable RLS
+ALTER TABLE public.ai_generation_jobs ENABLE ROW LEVEL SECURITY;
+
+-- Policies for RLS
+DROP POLICY IF EXISTS "Users can view own jobs" ON public.ai_generation_jobs;
+CREATE POLICY "Users can view own jobs" ON public.ai_generation_jobs FOR SELECT USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can insert own jobs" ON public.ai_generation_jobs;
+CREATE POLICY "Users can insert own jobs" ON public.ai_generation_jobs FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can update own jobs" ON public.ai_generation_jobs;
+CREATE POLICY "Users can update own jobs" ON public.ai_generation_jobs FOR UPDATE USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can delete own jobs" ON public.ai_generation_jobs;
+CREATE POLICY "Users can delete own jobs" ON public.ai_generation_jobs FOR DELETE USING (auth.uid() = user_id);
+
+-- Trigger for handle_updated_at
+DROP TRIGGER IF EXISTS trigger_update_ai_generation_jobs_updated_at ON public.ai_generation_jobs;
+CREATE TRIGGER trigger_update_ai_generation_jobs_updated_at
+  BEFORE UPDATE ON public.ai_generation_jobs
+  FOR EACH ROW
+  EXECUTE FUNCTION public.handle_updated_at();
+
+-- Indexes for performance
+CREATE INDEX IF NOT EXISTS idx_ai_generation_jobs_user_id ON public.ai_generation_jobs(user_id);
+CREATE INDEX IF NOT EXISTS idx_ai_generation_jobs_chat_id ON public.ai_generation_jobs(chat_id);
+CREATE INDEX IF NOT EXISTS idx_ai_generation_jobs_status ON public.ai_generation_jobs(status);
+
+-- 15. RELOAD SCHEMA CACHE
 -- Forces PostgREST to instantly reload definitions and resolves stale cache issues (PGRST205 / PGRST204)
 NOTIFY pgrst, 'reload schema';
 

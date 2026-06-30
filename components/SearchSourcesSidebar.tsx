@@ -300,21 +300,21 @@ export default function SearchSourcesSidebar({ isOpen, onClose, sources, theme, 
         )}
       </AnimatePresence>
       
-      {/* Desktop Implementation (Floating Sidebar) */}
+      {/* Desktop Implementation (Dedicated Right Sidebar) */}
       {!isMobile && (
         <div
           className={cn(
-            "fixed top-4 bottom-4 right-4 z-45 overflow-hidden transition-all duration-300 rounded-[28px] border shadow-2xl select-none",
-            isOpen ? "translate-x-0 opacity-100" : "translate-x-[450px] opacity-0 pointer-events-none",
+            "fixed top-0 bottom-0 right-0 z-40 overflow-hidden transition-all duration-300 border-l select-none flex flex-col",
+            isOpen ? "translate-x-0 opacity-100" : "translate-x-full opacity-0 pointer-events-none",
             theme === 'light' 
-              ? "bg-white/95 border-neutral-200/60 shadow-[0_8px_32px_rgba(0,0,0,0.06)] backdrop-blur-3xl" 
+              ? "bg-[#f8f9fa] border-neutral-200" 
               : (theme === 'cosmic' 
-                  ? "bg-[#090616]/95 border-indigo-500/10 shadow-[0_12px_40px_rgba(0,0,0,0.3)] backdrop-blur-3xl" 
-                  : "bg-neutral-950/95 border-neutral-800/60 shadow-[0_12px_40px_rgba(0,0,0,0.3)] backdrop-blur-3xl")
+                  ? "bg-[#06030f] border-indigo-500/10" 
+                  : "bg-neutral-950 border-neutral-800")
           )}
           style={{ width }}
         >
-          <div className="h-full flex flex-col">
+          <div className="h-full flex flex-col w-full">
             {SidebarContent}
           </div>
         </div>

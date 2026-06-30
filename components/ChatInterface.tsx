@@ -408,6 +408,21 @@ export default function Home() {
   const [webSearchRemaining, setWebSearchRemaining] = useState<number | null>(null);
   const [limitCard, setLimitCard] = useState<{ actionType: string; resetIn: string } | null>(null);
   const [isSourcesSidebarOpen, setIsSourcesSidebarOpen] = useState(false);
+  const [activeDocumentEditorId, setActiveDocumentEditorId] = useState<string | null>(null);
+
+  // Manage exclusive right sidebars
+  useEffect(() => {
+    if (isSourcesSidebarOpen) setActiveDocumentEditorId(null);
+  }, [isSourcesSidebarOpen]);
+
+  useEffect(() => {
+    if (activeDocumentEditorId) setIsSourcesSidebarOpen(false);
+  }, [activeDocumentEditorId]);
+
+  useEffect(() => {
+    setIsSourcesSidebarOpen(false);
+    setActiveDocumentEditorId(null);
+  }, [activeChatId, isLiveModeOpen]);
   const [activeSources, setActiveSources] = useState<any[]>([]);
   const [sourcesWidth, setSourcesWidth] = useState(380);
 
@@ -1107,30 +1122,18 @@ export default function Home() {
         });
         selectChat(resolvedId);
       } else if (!resolvedId && isStartup) {
-        const lastActive = localStorage.getItem('lastActiveChatId');
-        if (lastActive) {
-          logger.logInfo(LogCategory.CHAT, "[CHAT RESTORE]", {
-            urlChatId: null,
-            lastActiveChatId: lastActive,
-            restoredChatId: lastActive,
-            reason: 'B. Restore last active chat'
-          });
-          selectChat(lastActive);
-          return;
-        } else {
-          setIsTemporaryChat(false);
-          logger.logInfo(LogCategory.CHAT, "[CHAT RESTORE]", {
-            urlChatId: null,
-            lastActiveChatId: null,
-            restoredChatId: null,
-            reason: 'C. No chats exist (New Chat)'
-          });
-        }
+        setIsTemporaryChat(false);
+        logger.logInfo(LogCategory.CHAT, "[CHAT RESTORE]", {
+          urlChatId: null,
+          lastActiveChatId: null,
+          restoredChatId: null,
+          reason: 'C. Force new chat on startup'
+        });
       }
       
       // If we are at the root naturally (not startup redirect) and we had an active chat, let's reset it to null (e.g. New Chat explicitly)
       const currentPath = window.location.pathname;
-      if (currentPath === '/' && activeChatIdRef.current !== null && (!isStartup || !localStorage.getItem('lastActiveChatId'))) {
+      if (currentPath === '/' && activeChatIdRef.current !== null) {
         setActiveChatId(null);
         setIsTemporaryChat(false);
         setMessages([]);
@@ -1489,7 +1492,11 @@ export default function Home() {
 
   useEffect(() => {
     if (isNearBottomRef.current || isStreaming || isLiveModeOpen) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      if (isLiveModeOpen) {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+      } else {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }
     }
   }, [messages, isStreaming, liveTranscript, isLiveModeOpen]);
 
@@ -2556,7 +2563,7 @@ export default function Home() {
             model: modelMap[targetModel],
           });
 
-          const response = await fetch('/api/chat', {
+          const initResponse = await fetch('/api/chat', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -2589,6 +2596,24 @@ export default function Home() {
                 `Formats Supported: HTML (filename.html), CSS (filename.css), JS (filename.js), TS (filename.ts), TSX (filename.tsx), JSON (filename.json), CSV (filename.csv), TXT (filename.txt), MD (filename.md).\n` +
                 `Make sure to populate the filename precisely inside the markdown header parameters.`
             }),
+            signal: abortControllersRef.current[streamChatId]?.signal
+          });
+
+          if (!initResponse.ok) {
+            let errorText = '';
+            try {
+              errorText = await initResponse.text();
+            } catch (_) {}
+            logger.logError(LogCategory.CHAT, "Background generation queueing failed", {
+              status: initResponse.status,
+              responseBody: errorText,
+            });
+          }
+
+          const { jobId } = await initResponse.json();
+
+          const response = await fetch(`/api/chat/stream?jobId=${jobId}`, {
+            method: 'GET',
             signal: abortControllersRef.current[streamChatId]?.signal
           });
 
@@ -2925,10 +2950,12 @@ export default function Home() {
             if (regenerateMsgId && nextVersionNum) {
               const versionNum = nextVersionNum;
               
-              // 1. Update main messages table
+              // 1. Update main messages table (Bypassed: server-side background worker handles upserting this)
+              /*
               await updateMessage(regenerateMsgId, finalSavedText, finalSavedReasoning).catch(err => {
                 logger.logError(LogCategory.DATABASE, "Failed to update regenerated assistant message", err);
               });
+              */
               
               // 2. Save new version
               await saveMessageVersion(regenerateMsgId, finalSavedText, versionNum).then(() => {
@@ -2940,9 +2967,12 @@ export default function Home() {
                 logger.logError(LogCategory.DATABASE, "Failed to save message version", err);
               });
             } else {
+              // Bypassed: server-side background worker handles creating this automatically
+              /*
               await saveMessage(finalSavedChatId, 'model', finalSavedText, finalSavedReasoning).catch(err => {
                 logger.logError(LogCategory.DATABASE, "Failed to save assistant message", err);
               });
+              */
             }
           }
 
@@ -4069,7 +4099,7 @@ export default function Home() {
         className="flex-1 flex flex-col min-h-screen transition-all duration-300 ease-out"
         style={{
           paddingLeft: isSidebarOpen && !isMobile ? `${sidebarWidth}px` : '0px',
-          paddingRight: isSourcesSidebarOpen && !isMobile ? `${sourcesWidth}px` : '0px'
+          paddingRight: (isSourcesSidebarOpen || activeDocumentEditorId) && !isMobile ? `${sourcesWidth}px` : '0px'
         }}
       >
         <div id="desktop-split-container" className="flex-1 flex flex-row flex-nowrap relative h-screen overflow-hidden">
@@ -4088,7 +4118,7 @@ export default function Home() {
               className="fixed top-2 sm:top-4 h-[56px] sm:h-[60px] z-[110] flex items-center justify-between pointer-events-none transition-all duration-300"
               style={{
                 left: isSidebarOpen && !isMobile ? `calc(${sidebarWidth}px + 16px)` : (isMobile ? '8px' : '16px'),
-                right: isSourcesSidebarOpen && !isMobile ? `calc(${sourcesWidth}px + 16px)` : (isMobile ? '8px' : '16px')
+                right: (isSourcesSidebarOpen || activeDocumentEditorId) && !isMobile ? `calc(${sourcesWidth}px + 16px)` : (isMobile ? '8px' : '16px')
               }}
             >
             <div 
@@ -4476,31 +4506,33 @@ export default function Home() {
                           ) : (
                           <div className="relative group flex items-center">
                             {/* Hover Actions (Desktop/Mobile accessible) */}
-                            <div className="absolute right-full mr-2 opacity-0 group-hover:opacity-100 flex flex-row items-center gap-1 transition-opacity duration-200 group-active:opacity-100 flex-shrink-0">
-                              <button
-                                onClick={() => {
-                                  setEditingMessageId(message.id);
-                                  setEditContent(message.content);
-                                }}
-                                className={cn(
-                                  "p-1.5 sm:p-2 rounded-full transition-colors cursor-pointer active:scale-95",
-                                  theme === 'light' ? "hover:bg-neutral-100 text-neutral-400 hover:text-neutral-700" : "hover:bg-neutral-800 text-neutral-500 hover:text-neutral-200"
-                                )}
-                                title="Edit Message"
-                              >
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
-                              </button>
-                              <button
-                                onClick={() => handleCopyMessage(message.content)}
-                                className={cn(
-                                  "p-1.5 sm:p-2 rounded-full transition-colors cursor-pointer active:scale-95",
-                                  theme === 'light' ? "hover:bg-neutral-100 text-neutral-400 hover:text-neutral-700" : "hover:bg-neutral-800 text-neutral-500 hover:text-neutral-200"
-                                )}
-                                title="Copy Message"
-                              >
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-                              </button>
-                            </div>
+                            {!isLiveModeOpen && (
+                              <div className="absolute right-full mr-2 opacity-0 group-hover:opacity-100 flex flex-row items-center gap-1 transition-opacity duration-200 group-active:opacity-100 flex-shrink-0">
+                                <button
+                                  onClick={() => {
+                                    setEditingMessageId(message.id);
+                                    setEditContent(message.content);
+                                  }}
+                                  className={cn(
+                                    "p-1.5 sm:p-2 rounded-full transition-colors cursor-pointer active:scale-95",
+                                    theme === 'light' ? "hover:bg-neutral-100 text-neutral-400 hover:text-neutral-700" : "hover:bg-neutral-800 text-neutral-500 hover:text-neutral-200"
+                                  )}
+                                  title="Edit Message"
+                                >
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                                </button>
+                                <button
+                                  onClick={() => handleCopyMessage(message.content)}
+                                  className={cn(
+                                    "p-1.5 sm:p-2 rounded-full transition-colors cursor-pointer active:scale-95",
+                                    theme === 'light' ? "hover:bg-neutral-100 text-neutral-400 hover:text-neutral-700" : "hover:bg-neutral-800 text-neutral-500 hover:text-neutral-200"
+                                  )}
+                                  title="Copy Message"
+                                >
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                                </button>
+                              </div>
+                            )}
 
                             <div className="rounded-[20px] sm:rounded-[24px] rounded-tr-[4px] px-4 sm:px-5 py-2.5 sm:py-3 text-[13.5px] sm:text-[14.5px] leading-relaxed text-left select-text font-sans border max-w-full accent-bg accent-border shadow-md">
                               {message.content}
@@ -4670,6 +4702,15 @@ export default function Home() {
                                       content={parsedDoc.content} 
                                       theme={theme} 
                                       isStreaming={message.isStreaming && isLatestVersion}
+                                      isActiveEditor={activeDocumentEditorId === parsedDoc.id}
+                                      width={sourcesWidth}
+                                      onEditorOpen={(isOpen) => {
+                                        if (isOpen) {
+                                          setActiveDocumentEditorId(parsedDoc.id);
+                                        } else if (activeDocumentEditorId === parsedDoc.id) {
+                                          setActiveDocumentEditorId(null);
+                                        }
+                                      }}
                                     />
                                   )}
                                 </div>
@@ -4710,7 +4751,7 @@ export default function Home() {
                               )}
 
                               {/* Assistant Message Actions */}
-                              {!message.isStreaming && (
+                              {!message.isStreaming && !isLiveModeOpen && (
                                 <div className={cn(
                                   "flex items-center gap-1.5 mt-2 pt-2",
                                   theme === 'light' ? "text-neutral-400" : "text-neutral-500"
@@ -4943,7 +4984,7 @@ export default function Home() {
             className="fixed pointer-events-none z-30 flex flex-col items-center justify-center bottom-0 py-6 transition-all duration-300 ease-in-out"
             style={{
               left: isSidebarOpen && !isMobile ? `${sidebarWidth}px` : '0px',
-              right: isSourcesSidebarOpen && !isMobile ? `${sourcesWidth}px` : '0px'
+              right: (isSourcesSidebarOpen || activeDocumentEditorId) && !isMobile ? `${sourcesWidth}px` : '0px'
             }}
           >
 
@@ -5184,7 +5225,7 @@ export default function Home() {
                       )}
 
                       {/* Main input horizontally styled wrapper */}
-                      <div className="flex items-end relative w-full">
+                      <div className="flex items-stretch relative w-full mb-1">
                   {/* File handling native inputs */}
                   <input 
                     type="file"
@@ -5224,15 +5265,15 @@ export default function Home() {
                     initial={false}
                     animate={{
                       marginRight: isTyped ? "12px" : "0px",
-                      borderRadius: isTyped ? "9999px" : "26px 0px 0px 26px",
+                      borderRadius: isTyped ? "24px" : "24px 0px 0px 24px",
                       borderRightColor: isTyped ? borderThemeColor : "rgba(0,0,0,0)",
                       x: isTyped ? 0 : 0,
                     }}
                     transition={{ type: "spring", stiffness: 400, damping: 30, bounce: 0.1 }}
                     className={cn(
-                      "relative flex-shrink-0 flex items-center justify-center w-[52px] h-[52px] border backdrop-blur-3xl z-20 transition-colors duration-300 self-end mb-1",
+                      "relative flex-shrink-0 flex items-center justify-center w-[52px] border backdrop-blur-3xl z-20 transition-colors duration-300",
                       theme === 'light'
-                        ? "bg-white border-neutral-200 text-neutral-500 hover:text-neutral-900 shadow-[0_2px_12px_rgba(0,0,0,0.03)]"
+                        ? "bg-white border-neutral-200 text-neutral-500 hover:text-neutral-900 shadow-[0_2px_14px_rgba(0,0,0,0.04)]"
                         : theme === 'cosmic'
                           ? "bg-neutral-950/98 border-neutral-800 text-neutral-400 hover:text-white shadow-[0_4px_24px_rgba(0,0,0,0.4)]"
                           : "bg-neutral-900/95 border-neutral-800 text-neutral-400 hover:text-white shadow-[0_4px_24px_rgba(0,0,0,0.4)]"
@@ -5744,12 +5785,12 @@ export default function Home() {
                   <motion.div
                     initial={false}
                     animate={{
-                      borderRadius: isTyped ? (isMobile ? "20px" : "26px") : (isMobile ? "0px 20px 20px 0px" : "0px 26px 26px 0px"),
+                      borderRadius: isTyped ? (isMobile ? "20px" : "24px") : (isMobile ? "0px 20px 20px 0px" : "0px 24px 24px 0px"),
                       borderLeftColor: isTyped ? borderThemeColor : "rgba(0,0,0,0)",
                     }}
                     transition={{ type: "spring", stiffness: 400, damping: 30, bounce: 0.1 }}
                     className={cn(
-                      "flex-1 flex items-end gap-1 sm:gap-2 px-2 py-1.5 sm:px-3 sm:py-2 border backdrop-blur-3xl min-h-[46px] sm:min-h-[52px] md:min-h-[56px] lg:min-h-[60px] relative z-10 self-end mb-1",
+                      "flex-1 flex items-end gap-1 sm:gap-2 px-2 py-1.5 sm:px-3 sm:py-2 border backdrop-blur-3xl min-h-[46px] sm:min-h-[52px] md:min-h-[56px] lg:min-h-[60px] relative z-10",
                       theme === 'light'
                         ? "bg-white border-neutral-200 shadow-[0_2px_14px_rgba(0,0,0,0.04)]"
                         : theme === 'cosmic'
