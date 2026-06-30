@@ -3,7 +3,14 @@
 import { useEffect, useState } from 'react';
 
 export default function DebugPage() {
-  const [debugInfo, setDebugInfo] = useState<any>(null);
+  const [debugInfo, setDebugInfo] = useState<any>({
+      version: '0.1.0',
+      env: process.env.NODE_ENV,
+      url: typeof window !== 'undefined' ? window.location.href : '',
+      userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+      screen: typeof window !== 'undefined' ? `${window.innerWidth} x ${window.innerHeight}` : '',
+      online: typeof navigator !== 'undefined' ? (navigator.onLine ? 'Online' : 'Offline') : 'Unknown',
+    });
 
   useEffect(() => {
     // Lazy-load and initialize Eruda
@@ -14,19 +21,8 @@ export default function DebugPage() {
       eruda.show('console');
     });
 
-    setDebugInfo({
-      version: '0.1.0',
-      env: process.env.NODE_ENV,
-      url: window.location.href,
-      userAgent: navigator.userAgent,
-      screen: `${window.innerWidth} x ${window.innerHeight}`,
-      online: navigator.onLine ? 'Online' : 'Offline',
-    });
-
     return () => {
-      // We don't destroy Eruda here as it handles itself well, 
-      // but if needed to strictly remove it:
-      // import('eruda').then(({ default: eruda }) => eruda.destroy());
+      // We don't destroy Eruda here as it handles itself well
     };
   }, []);
 

@@ -1256,7 +1256,7 @@ export default function Home() {
       // Load reactions
       if (session?.user?.id) {
         try {
-          const reactions = await getMessageReactions(session.user.id, id);
+          const reactions = await getMessageReactions(session.user.id);
           const reactionMap: Record<string, 'like' | 'dislike'> = {};
           reactions.forEach((r: any) => {
             reactionMap[r.message_id] = r.reaction;

@@ -506,13 +506,12 @@ export async function saveAttachmentRecord(attachment: {
   return data;
 }
 
-export async function getMessageReactions(userId: string, chatId: string) {
+export async function getMessageReactions(userId: string) {
   const supabase = createClient();
   const { data, error } = await supabase
     .from('message_feedback')
     .select('message_id, reaction:feedback_type')
-    .eq('user_id', userId)
-    .eq('chat_id', chatId);
+    .eq('user_id', userId);
   if (error) {
     logger.logError(LogCategory.DATABASE, "getMessageReactions failed", error);
     return [];
