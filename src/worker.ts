@@ -9,7 +9,6 @@ import { detectDocumentTrigger } from '@/lib/ai/intent';
 import { classifyMemory } from '@/lib/ai/memory-classifier';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { EventEmitter } from 'events';
-import crypto from 'crypto';
 
 
 // Setup TypeScript bindings interface
