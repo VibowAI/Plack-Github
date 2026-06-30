@@ -1131,12 +1131,16 @@ export default function Home() {
         });
       }
       
-      // If we are at the root naturally (not startup redirect) and we had an active chat, let's reset it to null (e.g. New Chat explicitly)
+      // Always ensure the home screen is fully pristine and never retains previous chat session context on load or refresh
       const currentPath = window.location.pathname;
-      if (currentPath === '/' && activeChatIdRef.current !== null) {
-        setActiveChatId(null);
+      if (currentPath === '/') {
+        if (activeChatIdRef.current !== null) {
+          setActiveChatId(null);
+        }
         setIsTemporaryChat(false);
-        setMessages([]);
+        if (messages.length > 0) {
+          setMessages([]);
+        }
         setExpandedReasonings({});
       }
     }
@@ -5266,17 +5270,19 @@ export default function Home() {
                     animate={{
                       marginRight: isTyped ? "12px" : "0px",
                       borderRadius: isTyped ? "24px" : "24px 0px 0px 24px",
+                      borderRightWidth: isTyped ? "1px" : "0px",
                       borderRightColor: isTyped ? borderThemeColor : "rgba(0,0,0,0)",
+                      borderRightStyle: "solid",
                       x: isTyped ? 0 : 0,
                     }}
                     transition={{ type: "spring", stiffness: 400, damping: 30, bounce: 0.1 }}
                     className={cn(
-                      "relative flex-shrink-0 flex items-center justify-center w-[52px] border backdrop-blur-3xl z-20 transition-colors duration-300",
+                      "relative flex-shrink-0 flex items-center justify-center w-[52px] border-t border-b border-l backdrop-blur-3xl z-20 transition-colors duration-300 min-h-[46px] sm:min-h-[52px] md:min-h-[56px] lg:min-h-[60px]",
                       theme === 'light'
-                        ? "bg-white border-neutral-200 text-neutral-500 hover:text-neutral-900 shadow-[0_2px_14px_rgba(0,0,0,0.04)]"
+                        ? "bg-white border-t-neutral-200 border-b-neutral-200 border-l-neutral-200 text-neutral-500 hover:text-neutral-900 shadow-[0_2px_14px_rgba(0,0,0,0.04)]"
                         : theme === 'cosmic'
-                          ? "bg-neutral-950/98 border-neutral-800 text-neutral-400 hover:text-white shadow-[0_4px_24px_rgba(0,0,0,0.4)]"
-                          : "bg-neutral-900/95 border-neutral-800 text-neutral-400 hover:text-white shadow-[0_4px_24px_rgba(0,0,0,0.4)]"
+                          ? "bg-neutral-950/98 border-t-neutral-800 border-b-neutral-800 border-l-neutral-800 text-neutral-400 hover:text-white shadow-[0_4px_24px_rgba(0,0,0,0.4)]"
+                          : "bg-neutral-900/95 border-t-neutral-800 border-b-neutral-800 border-l-neutral-800 text-neutral-400 hover:text-white shadow-[0_4px_24px_rgba(0,0,0,0.4)]"
                     )}
                   >
                     <button
@@ -5766,36 +5772,23 @@ export default function Home() {
                     </AnimatePresence>
                   </motion.div>
 
-                  {/* Vertical visual divider in Merged state */}
-                  <motion.div
-                    initial={false}
-                    animate={{
-                      opacity: isTyped ? 0 : 1,
-                      scaleY: isTyped ? 0.2 : 0.6,
-                      width: isTyped ? 0 : 1,
-                    }}
-                    transition={{ type: "spring", stiffness: 400, damping: 30 }}
-                    className={cn(
-                      "h-[52px] shrink-0 z-20 self-center mb-0.5",
-                      theme === 'light' ? "bg-neutral-200" : "bg-neutral-800"
-                    )}
-                  />
-
                   {/* Redesigned interactive input bubble/capsule */}
                   <motion.div
                     initial={false}
                     animate={{
                       borderRadius: isTyped ? (isMobile ? "20px" : "24px") : (isMobile ? "0px 20px 20px 0px" : "0px 24px 24px 0px"),
+                      borderLeftWidth: isTyped ? "1px" : "0px",
                       borderLeftColor: isTyped ? borderThemeColor : "rgba(0,0,0,0)",
+                      borderLeftStyle: "solid",
                     }}
                     transition={{ type: "spring", stiffness: 400, damping: 30, bounce: 0.1 }}
                     className={cn(
-                      "flex-1 flex items-end gap-1 sm:gap-2 px-2 py-1.5 sm:px-3 sm:py-2 border backdrop-blur-3xl min-h-[46px] sm:min-h-[52px] md:min-h-[56px] lg:min-h-[60px] relative z-10",
+                      "flex-1 flex items-end gap-1 sm:gap-2 px-2 py-1.5 sm:px-3 sm:py-2 border-t border-b border-r backdrop-blur-3xl min-h-[46px] sm:min-h-[52px] md:min-h-[56px] lg:min-h-[60px] relative z-10",
                       theme === 'light'
-                        ? "bg-white border-neutral-200 shadow-[0_2px_14px_rgba(0,0,0,0.04)]"
+                        ? "bg-white border-t-neutral-200 border-b-neutral-200 border-r-neutral-200 shadow-[0_2px_14px_rgba(0,0,0,0.04)]"
                         : theme === 'cosmic'
-                          ? "bg-neutral-950/98 border-neutral-800 shadow-[0_4px_24px_rgba(0,0,0,0.4)]"
-                          : "bg-neutral-900/95 border-neutral-800 shadow-[0_4px_24px_rgba(0,0,0,0.4)]"
+                          ? "bg-neutral-950/98 border-t-neutral-800 border-b-neutral-800 border-r-neutral-800 shadow-[0_4px_24px_rgba(0,0,0,0.4)]"
+                          : "bg-neutral-900/95 border-t-neutral-800 border-b-neutral-800 border-r-neutral-800 shadow-[0_4px_24px_rgba(0,0,0,0.4)]"
                     )}
                   >
                     {/* Input area */}

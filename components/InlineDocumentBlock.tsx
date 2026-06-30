@@ -93,19 +93,21 @@ const renderHunkText = (hunk: DiffHunk): string => {
 
 // --- Uncontrolled Editor Component ---
 
-const UncontrolledEditor = ({ initialHtml, onChange, editorRef, className }: any) => {
-  const localRef = useRef<HTMLDivElement>(null);
+const UncontrolledEditor = ({ initialHtml, onChange, editorRef, className, theme }: any) => {
+  const localRef = useRef<HTMLTextAreaElement>(null);
   const refToUse = editorRef || localRef;
-  const [initial] = useState(initialHtml); // Capture once on mount
 
   return (
-    <div 
-      ref={refToUse} 
-      contentEditable={true} 
-      suppressContentEditableWarning={true}
-      onInput={(e: any) => onChange(e.currentTarget.innerText)}
-      className={className} 
-      dangerouslySetInnerHTML={{ __html: initial }}
+    <textarea
+      ref={refToUse}
+      value={initialHtml}
+      onChange={(e) => onChange(e.target.value)}
+      className={cn(
+        className,
+        "resize-none focus:outline-none focus:ring-0 border-none bg-transparent w-full min-h-[500px] sm:min-h-[700px] focus:ring-transparent focus:border-transparent outline-none focus:ring-offset-0 select-text cursor-text",
+        theme === 'light' ? "text-neutral-700 placeholder-neutral-400" : "text-neutral-300 placeholder-neutral-600"
+      )}
+      placeholder="Start typing your elegant document body..."
     />
   );
 };
@@ -631,9 +633,11 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
                         placeholder="Document Title" 
                       />
                       <UncontrolledEditor
+                        key={`${actualDocId}-${currentCheckpointIndex}`}
                         editorRef={editorRef} 
                         initialHtml={activeDocument}
                         onChange={setActiveDocument}
+                        theme={theme}
                         className={cn(
                           "w-full min-h-[500px] sm:min-h-[700px] font-mono text-[15px] sm:text-[17px] leading-[1.6] sm:leading-[1.8] px-0 py-2 sm:py-4 bg-transparent border-none outline-none focus:ring-0 whitespace-pre-wrap transition-opacity duration-300", 
                           theme === 'light' ? "text-neutral-700" : "text-neutral-300"
