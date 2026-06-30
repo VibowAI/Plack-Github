@@ -2,7 +2,6 @@
 
 import React, { useState } from 'react';
 import Sidebar from '@/components/Sidebar';
-import ZoomNotification from '@/components/ZoomNotification';
 import { useAppContext } from '@/context/AppContext';
 import Auth from '@/components/Auth';
 import { cn } from '@/lib/utils';
@@ -55,11 +54,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         user={user}
         width={sidebarWidth}
         onWidthChange={setSidebarWidth}
-        onOpenConnections={() => router.push('/connections')}
       />
 
-      <ZoomNotification theme={theme} />
-      
       <main 
         className={cn(
           "flex-1 relative flex flex-col min-w-0 transition-all duration-300 ease-out h-full",

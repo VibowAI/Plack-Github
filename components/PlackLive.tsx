@@ -17,14 +17,18 @@ import {
   MoreVertical,
   VideoOff,
   Sliders,
-  Sparkles
+  Sparkles,
+  ThumbsUp,
+  ThumbsDown,
+  Copy,
+  MoreHorizontal
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/lib/utils';
 import { GoogleGenAI, Modality } from "@google/genai";
 
 // Voice states specified by requirements
-type VoiceState = 'Ready' | 'Listening' | 'Thinking' | 'Speaking' | 'Connection Lost';
+type VoiceState = 'Ready' | 'Listening' | 'Transcribing' | 'Thinking' | 'Streaming Response' | 'Speaking' | 'Connection Lost';
 
 interface PlackLiveProps {
   isOpen: boolean;
@@ -111,6 +115,21 @@ export default function PlackLive({
   // Local active states for camera and screen sharing (mock visualization)
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
+
+  // States for interactive Action Row
+  const [isLiked, setIsLiked] = useState(false);
+  const [isDisliked, setIsDisliked] = useState(false);
+  const [copyFeedback, setCopyFeedback] = useState(false);
+
+  // Timeouts and recovery triggers
+  const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectAttemptsRef = useRef<number>(0);
+  const isOpenRef = useRef(isOpen);
+
+  useEffect(() => {
+    isOpenRef.current = isOpen;
+  }, [isOpen]);
 
   // Accumulate text for saving conversational turns
   const currentUserTextRef = useRef<string>("");
@@ -208,6 +227,7 @@ export default function PlackLive({
         setVoiceState('Speaking');
         console.log("[AUDIO PLAYBACK START]");
         console.log("[AI SPEAKING]");
+        console.log("[LIVE SPEAK START]");
       }
 
       source.onended = () => {
@@ -215,6 +235,7 @@ export default function PlackLive({
         if (currentPlaybacksCountRef.current <= 0) {
           currentPlaybacksCountRef.current = 0;
           console.log("[AUDIO PLAYBACK END]");
+          console.log("[LIVE SPEAK COMPLETE]");
           // Cleanly transition state back to Listening once playback fully terminates
           if (voiceStateRef.current === 'Speaking') {
             setVoiceState('Listening');
@@ -325,28 +346,37 @@ export default function PlackLive({
             if (inputTranscription?.text) {
               const uText = inputTranscription.text.trim();
               if (uText) {
+                // Clear old transcripts on new user input to avoid visual flash/overlap
+                if (voiceStateRef.current === 'Listening' || voiceStateRef.current === 'Speaking' || voiceStateRef.current === 'Ready') {
+                  setLiveAiText('');
+                  setLiveUserText('');
+                }
+                
                 currentUserTextRef.current = uText;
                 setLiveUserText(uText);
-                setLiveAiText(''); // clear previous AI response text
-                console.log("[AUDIO SENT & TRANSCRIBED]", uText);
+                setVoiceState('Transcribing');
+                console.log("[LIVE TRANSCRIPT RECEIVED]", uText);
                 console.log("[NEW TURN STARTED]");
                 saveLiveUserMessageRef.current?.(uText);
-                onLiveTranscriptUpdate?.({ userText: uText, aiText: currentAiTextRef.current });
-                console.log("[LIVE TRANSCRIPT UPDATED]");
+                onLiveTranscriptUpdate?.({ userText: uText, aiText: "" });
               }
             }
 
             // Check for model incoming spoken content
             const modelTurn = message.serverContent?.modelTurn;
             if (modelTurn?.parts) {
-              setVoiceState('Speaking');
+              if (voiceStateRef.current !== 'Speaking') {
+                setVoiceState('Streaming Response');
+              }
               for (const part of modelTurn.parts) {
                 if (part.text) {
+                  if (!currentAiTextRef.current) {
+                    console.log("[LIVE RESPONSE START]");
+                  }
+                  console.log("[LIVE RESPONSE STREAM]", part.text);
                   currentAiTextRef.current += part.text;
                   setLiveAiText(currentAiTextRef.current);
-                  setLiveUserText(''); // clear active user transcript
                   onLiveTranscriptUpdate?.({ userText: currentUserTextRef.current, aiText: currentAiTextRef.current });
-                  console.log("[LIVE TRANSCRIPT UPDATED]");
                 }
                 if (part.inlineData?.data) {
                   playAudioChunk(part.inlineData.data);
@@ -372,12 +402,12 @@ export default function PlackLive({
               setLiveUserText('');
               setLiveAiText('');
               onLiveTranscriptUpdate?.({ userText: '', aiText: '' });
-              console.log("[LIVE TRANSCRIPT UPDATED]");
               setVoiceState('Listening');
             }
 
             // Save completed conversational turn in the chat system once complete
             if (message.serverContent?.turnComplete) {
+              console.log("[LIVE RESPONSE COMPLETE]");
               const aText = currentAiTextRef.current.trim();
               if (aText) {
                 saveLiveAssistantMessageRef.current?.(aText);
@@ -385,28 +415,28 @@ export default function PlackLive({
               
               currentUserTextRef.current = "";
               currentAiTextRef.current = "";
-              setLiveUserText('');
-              setLiveAiText('');
-              onLiveTranscriptUpdate?.({ userText: '', aiText: '' });
-              console.log("[LIVE TRANSCRIPT UPDATED]");
               setVoiceState('Listening');
             }
           },
           onclose: () => {
             console.log("[LIVE SESSION CLOSED]");
             console.log("[LIVE ENDED]");
-            setVoiceState('Ready');
+            if (isOpenRef.current) {
+              handleAutoReconnect();
+            } else {
+              setVoiceState('Ready');
+            }
           },
           onerror: (err) => {
             console.error("[LIVE ERROR]", err);
-            setVoiceState('Connection Lost');
-            setPermissionError("Unable to connect to Plack Live.");
+            console.log("[LIVE ERROR]");
+            handleAutoReconnect();
           }
         }
       });
 
       sessionRef.current = session;
-      console.log("[LIVE SESSION CONNECTED]");
+      console.log("[LIVE CONNECTED]");
       setVoiceState('Listening');
 
       // Configure ScriptProcessor to capture microphone input
@@ -420,7 +450,7 @@ export default function PlackLive({
         
         const inputData = e.inputBuffer.getChannelData(0);
         
-        // Calculate input raw sample Root Mean Square (RMS) for instant local interruption
+        // Calculate input raw sample Root Mean Square (RMS) for instant local interruption & voice activity tracking
         let squareSum = 0;
         for (let i = 0; i < inputData.length; i++) {
           squareSum += inputData[i] * inputData[i];
@@ -437,6 +467,22 @@ export default function PlackLive({
           setVoiceState('Listening');
         }
 
+        // Voice activity silence-to-thinking timer
+        if (voiceStateRef.current === 'Transcribing' && rmsValue < 0.015) {
+          if (!silenceTimerRef.current) {
+            silenceTimerRef.current = setTimeout(() => {
+              if (voiceStateRef.current === 'Transcribing') {
+                setVoiceState('Thinking');
+              }
+            }, 600);
+          }
+        } else if (rmsValue >= 0.015) {
+          if (silenceTimerRef.current) {
+            clearTimeout(silenceTimerRef.current);
+            silenceTimerRef.current = null;
+          }
+        }
+
         // Stream audio payload to the websocket session
         const pcmBuffer = new Int16Array(inputData.length);
         for (let i = 0; i < inputData.length; i++) {
@@ -450,6 +496,7 @@ export default function PlackLive({
           sessionRef.current.sendRealtimeInput({
             audio: { data: base64, mimeType: "audio/pcm;rate=16000" }
           });
+          console.log("[LIVE AUDIO SENT]");
         } catch (err) {
           console.warn("Failed streaming audio input chunk:", err);
         }
@@ -458,10 +505,37 @@ export default function PlackLive({
       return true;
     } catch (err: any) {
       console.error("[LIVE ERROR]", err);
-      setVoiceState('Connection Lost');
-      setPermissionError('Could not start Plack Live. Please verify microphone access permissions.');
+      console.log("[LIVE ERROR]");
+      handleAutoReconnect();
       return false;
     }
+  };
+
+  const handleAutoReconnect = () => {
+    if (!isOpenRef.current) return;
+    if (reconnectAttemptsRef.current >= 5) {
+      console.log("[LIVE ERROR] Max reconnect attempts reached");
+      setPermissionError("Connection lost. Tap center orb to reconnect.");
+      setVoiceState('Connection Lost');
+      return;
+    }
+
+    reconnectAttemptsRef.current++;
+    setVoiceState('Connection Lost');
+    console.log(`[LIVE ERROR] Attempting auto-reconnect (${reconnectAttemptsRef.current}/5) in 3s...`);
+
+    if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+    reconnectTimeoutRef.current = setTimeout(async () => {
+      if (!isOpenRef.current) return;
+      cleanUpSession();
+      const success = await initMicrophoneAndLiveSession();
+      if (success) {
+        reconnectAttemptsRef.current = 0;
+        console.log("[LIVE CONNECTED] Auto-reconnected successfully");
+      } else {
+        handleAutoReconnect();
+      }
+    }, 3000);
   };
 
   // Helper stopping media stream tracks
@@ -475,6 +549,16 @@ export default function PlackLive({
   const cleanUpSession = () => {
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
+    }
+
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
     }
     
     stopAllPlayback();
@@ -536,6 +620,12 @@ export default function PlackLive({
 
   // Toggle local mute state directly
   const handleToggleMute = () => {
+    if (voiceState === 'Connection Lost') {
+      reconnectAttemptsRef.current = 0;
+      setPermissionError(null);
+      initMicrophoneAndLiveSession();
+      return;
+    }
     const nextMuted = !isMuted;
     setIsMuted(nextMuted);
     if (nextMuted) {
@@ -577,11 +667,13 @@ export default function PlackLive({
 
   // Visual Center Orb Redesign
   const renderCenterOrb = () => {
-    let orbGradientClass = "from-[#0a4bf5] via-[#1e0bf6] to-[#6006f7] shadow-[0_0_50px_rgba(30,11,246,0.6)]";
+    let orbGradientClass = "from-[#0a4bf5] via-[#1e0bf6] to-[#6006f7] shadow-[0_0_50px_rgba(30,11,246,0.6)] text-white";
     let animateProps: any = {};
 
     if (voiceState === 'Ready' || voiceState === 'Connection Lost' || isMuted) {
-      orbGradientClass = "from-neutral-800 via-neutral-900 to-neutral-950 shadow-[0_0_30px_rgba(255,255,255,0.05)]";
+      orbGradientClass = theme === 'light'
+        ? "from-neutral-200 via-neutral-100 to-neutral-300 shadow-[0_0_20px_rgba(0,0,0,0.05)] text-neutral-700 border border-neutral-200"
+        : "from-neutral-800 via-neutral-900 to-neutral-950 shadow-[0_0_30px_rgba(255,255,255,0.05)] text-white";
       // Idle state: Slow breathing/rotating flow
       animateProps = {
         scale: [1, 1.05, 1],
@@ -589,7 +681,7 @@ export default function PlackLive({
         borderRadius: ["50%", "47% 53% 46% 54% / 46% 54% 47% 53%", "50%"]
       };
     } else if (voiceState === 'Listening') {
-      orbGradientClass = "from-[#0266f2] via-[#0433ff] to-[#109dec] shadow-[0_0_60px_rgba(4,51,255,0.7)]";
+      orbGradientClass = "from-[#0266f2] via-[#0433ff] to-[#109dec] shadow-[0_0_60px_rgba(4,51,255,0.7)] text-white";
       // Listening state: Pulse gently
       animateProps = {
         scale: [1, 1.08, 1],
@@ -600,8 +692,15 @@ export default function PlackLive({
         ],
         borderRadius: ["50%", "49% 51% 52% 48% / 48% 52% 49% 51%", "50%"]
       };
+    } else if (voiceState === 'Transcribing') {
+      orbGradientClass = "from-amber-400 via-orange-500 to-amber-600 shadow-[0_0_50px_rgba(245,158,11,0.6)] text-white";
+      // Transcribing state: Pulse energetically
+      animateProps = {
+        scale: [1, 1.12, 1],
+        borderRadius: ["50%", "45% 55% 45% 55% / 55% 45% 55% 45%", "50%"]
+      };
     } else if (voiceState === 'Thinking') {
-      orbGradientClass = "from-[#6200ff] via-[#b300ff] to-[#ff007f] shadow-[0_0_60px_rgba(179,0,255,0.7)]";
+      orbGradientClass = "from-[#6200ff] via-[#b300ff] to-[#ff007f] shadow-[0_0_60px_rgba(179,0,255,0.7)] text-white";
       // Thinking state: Liquid flow morph animation
       animateProps = {
         scale: [1, 1.04, 0.98, 1.03, 1],
@@ -613,8 +712,19 @@ export default function PlackLive({
           "42% 58% 70% 30% / 45% 45% 55% 55%"
         ]
       };
+    } else if (voiceState === 'Streaming Response') {
+      orbGradientClass = "from-pink-400 via-indigo-500 to-purple-600 shadow-[0_0_60px_rgba(99,102,241,0.6)] text-white";
+      // Streaming Response state: Wave flow
+      animateProps = {
+        scale: [1, 1.06, 1.02, 1.06, 1],
+        borderRadius: [
+          "50%",
+          "40% 60% 50% 50% / 50% 60% 40% 50%",
+          "50%"
+        ]
+      };
     } else if (voiceState === 'Speaking') {
-      orbGradientClass = "from-[#00bfff] via-[#0433ff] to-[#7b00ff] shadow-[0_0_70px_rgba(4,51,255,0.8)]";
+      orbGradientClass = "from-[#00bfff] via-[#0433ff] to-[#7b00ff] shadow-[0_0_70px_rgba(4,51,255,0.8)] text-white";
       // Speaking state: Expand and contract reactively to actual mic audio volume
       animateProps = {
         scale: 1 + audioLevel * 0.7,
@@ -706,35 +816,70 @@ export default function PlackLive({
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         transition={{ duration: 0.35 }}
-        className="fixed inset-0 w-screen h-screen min-h-screen z-[100] flex flex-col bg-[#050505] text-white overflow-hidden font-sans select-none"
+        className={cn(
+          "fixed inset-0 w-screen h-screen min-h-screen z-[100] flex flex-col overflow-hidden font-sans select-none transition-colors duration-300",
+          theme === 'light' ? "bg-[#f9fafb] text-neutral-800" : "bg-[#050505] text-white"
+        )}
       >
         {/* Subtle, beautiful atmospheric ambient background gradients */}
         <div className="absolute inset-0 z-0 pointer-events-none">
-          <div className="absolute top-[10%] left-[25%] -translate-x-1/2 -translate-y-1/2 w-[450px] h-[450px] rounded-full bg-blue-900/10 blur-[130px]" />
-          <div className="absolute bottom-[15%] right-[25%] translate-x-1/2 translate-y-1/2 w-[450px] h-[450px] rounded-full bg-indigo-900/10 blur-[130px]" />
-          <div className="absolute top-[50%] left-[50%] -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full bg-violet-950/5 blur-[160px]" />
+          {theme === 'light' ? (
+            <>
+              <div className="absolute top-[10%] left-[25%] -translate-x-1/2 -translate-y-1/2 w-[450px] h-[450px] rounded-full bg-blue-100/30 blur-[130px]" />
+              <div className="absolute bottom-[15%] right-[25%] translate-x-1/2 translate-y-1/2 w-[450px] h-[450px] rounded-full bg-indigo-100/30 blur-[130px]" />
+              <div className="absolute top-[50%] left-[50%] -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full bg-violet-100/20 blur-[160px]" />
+            </>
+          ) : (
+            <>
+              <div className="absolute top-[10%] left-[25%] -translate-x-1/2 -translate-y-1/2 w-[450px] h-[450px] rounded-full bg-blue-900/10 blur-[130px]" />
+              <div className="absolute bottom-[15%] right-[25%] translate-x-1/2 translate-y-1/2 w-[450px] h-[450px] rounded-full bg-indigo-900/10 blur-[130px]" />
+              <div className="absolute top-[50%] left-[50%] -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full bg-violet-950/5 blur-[160px]" />
+            </>
+          )}
         </div>
 
         {/* Top Header Row */}
-        <header className="relative z-20 h-16 shrink-0 flex items-center justify-between px-6 border-b border-white/5 bg-black/10 backdrop-blur-md">
+        <header className={cn(
+          "relative z-20 h-16 shrink-0 flex items-center justify-between px-6 border-b backdrop-blur-md transition-colors duration-300",
+          theme === 'light' 
+            ? "border-neutral-200/60 bg-white/70" 
+            : "border-white/5 bg-black/10"
+        )}>
           <div className="flex items-center gap-3">
-            <button className="p-2 -ml-2 rounded-full hover:bg-white/5 active:scale-95 transition-all text-neutral-400 hover:text-white pointer-events-auto">
+            <button className={cn(
+              "p-2 -ml-2 rounded-full active:scale-95 transition-all pointer-events-auto",
+              theme === 'light' 
+                ? "text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100" 
+                : "text-neutral-400 hover:text-white hover:bg-white/5"
+            )}>
               <Menu size={20} />
             </button>
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
-              <span className="text-sm font-semibold tracking-wider text-neutral-200">Plack Live</span>
+              <span className={cn(
+                "text-sm font-semibold tracking-wider",
+                theme === 'light' ? "text-neutral-800" : "text-neutral-200"
+              )}>Plack Live</span>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Optional indicators */}
             {isCameraOn && (
-              <span className="text-[10px] bg-blue-500/15 border border-blue-500/20 px-2 py-0.5 rounded-full text-blue-400 font-bold tracking-wider uppercase">
+              <span className={cn(
+                "text-[10px] border px-2 py-0.5 rounded-full font-bold tracking-wider uppercase",
+                theme === 'light'
+                  ? "bg-blue-50 border-blue-200 text-blue-600"
+                  : "bg-blue-500/15 border-blue-500/20 text-blue-400"
+              )}>
                 Video On
               </span>
             )}
-            <button className="p-2 rounded-full hover:bg-white/5 active:scale-95 transition-all text-neutral-400 hover:text-white pointer-events-auto">
+            <button className={cn(
+              "p-2 rounded-full active:scale-95 transition-all pointer-events-auto",
+              theme === 'light' 
+                ? "text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100" 
+                : "text-neutral-400 hover:text-white hover:bg-white/5"
+            )}>
               <MoreVertical size={20} />
             </button>
           </div>
@@ -757,13 +902,23 @@ export default function PlackLive({
         {/* Conversation Stream Block */}
         <main className="relative z-10 flex-1 overflow-y-auto px-6 md:px-24 py-6 md:py-10 flex flex-col justify-end select-text scrollbar-thin scrollbar-thumb-neutral-800 scrollbar-track-transparent">
           {allMessages.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-center text-neutral-500 px-6 max-w-sm mx-auto">
-              <Radio size={32} className="text-indigo-500/50 mb-3 animate-pulse" />
-              <p className="text-sm font-semibold text-neutral-300 tracking-wide">
-                Voice Connection Active
-              </p>
-              <p className="text-xs text-neutral-500 mt-1 leading-relaxed">
-                Start speaking anytime to talk with Plack AI.
+            <div className="h-full flex flex-col items-center justify-center text-center px-6 max-w-2xl mx-auto space-y-4">
+              <motion.h1 
+                initial={{ opacity: 0, y: -15 }}
+                animate={{ opacity: 1, y: 0 }}
+                className={cn(
+                  "text-4xl md:text-5xl font-light tracking-tight text-center max-w-xl",
+                  theme === 'light' ? "text-neutral-900" : "text-neutral-100"
+                )}
+                style={{ fontFamily: 'var(--font-sans), system-ui, sans-serif' }}
+              >
+                How can I help you today?
+              </motion.h1>
+              <p className={cn(
+                "text-sm max-w-md opacity-60 font-medium leading-relaxed", 
+                theme === 'light' ? "text-neutral-600" : "text-neutral-400"
+              )}>
+                Plack Live is active and listening. Start speaking to begin.
               </p>
             </div>
           ) : (
@@ -788,7 +943,9 @@ export default function PlackLive({
                     <div
                       className={cn(
                         "max-w-[85%] text-lg md:text-xl font-medium leading-relaxed font-sans break-words whitespace-pre-wrap select-text",
-                        isUser ? "text-neutral-200" : "text-white"
+                        isUser 
+                          ? (theme === 'light' ? "text-neutral-700" : "text-neutral-200") 
+                          : (theme === 'light' ? "text-neutral-900" : "text-white")
                       )}
                     >
                       {msg.content}
@@ -808,7 +965,10 @@ export default function PlackLive({
               initial={{ scale: 0.8, opacity: 0, y: 20 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.8, opacity: 0, y: 20 }}
-              className="absolute bottom-40 right-6 md:right-12 w-32 h-44 rounded-2xl bg-[#0d0d0d] border border-white/10 overflow-hidden shadow-2xl z-30 flex flex-col items-center justify-center select-none"
+              className={cn(
+                "absolute bottom-44 right-6 md:right-12 w-32 h-44 rounded-2xl border overflow-hidden shadow-2xl z-30 flex flex-col items-center justify-center select-none",
+                theme === 'light' ? "bg-white border-neutral-200" : "bg-[#0d0d0d] border-white/10"
+              )}
             >
               <div className="absolute top-2 left-2 flex items-center gap-1 bg-black/60 px-1.5 py-0.5 rounded-full text-[9px] font-semibold text-neutral-300">
                 <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
@@ -817,7 +977,7 @@ export default function PlackLive({
               <div className="w-10 h-10 rounded-full bg-blue-600/10 flex items-center justify-center border border-blue-500/20">
                 <Video size={18} className="text-blue-400" />
               </div>
-              <span className="text-[10px] font-semibold text-neutral-400 mt-2">Camera Active</span>
+              <span className={cn("text-[10px] font-semibold mt-2", theme === 'light' ? "text-neutral-600" : "text-neutral-400")}>Camera Active</span>
             </motion.div>
           )}
 
@@ -826,7 +986,10 @@ export default function PlackLive({
               initial={{ scale: 0.8, opacity: 0, y: 20 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.8, opacity: 0, y: 20 }}
-              className="absolute bottom-40 left-6 md:left-12 w-44 h-28 rounded-2xl bg-[#0d0d0d] border border-white/10 overflow-hidden shadow-2xl z-30 flex flex-col items-center justify-center select-none"
+              className={cn(
+                "absolute bottom-44 left-6 md:left-12 w-44 h-28 rounded-2xl border overflow-hidden shadow-2xl z-30 flex flex-col items-center justify-center select-none",
+                theme === 'light' ? "bg-white border-neutral-200" : "bg-[#0d0d0d] border-white/10"
+              )}
             >
               <div className="absolute top-2 left-2 flex items-center gap-1 bg-black/60 px-1.5 py-0.5 rounded-full text-[9px] font-semibold text-neutral-300">
                 <span className="w-1.5 h-1.5 rounded-full bg-cyan-500 animate-pulse" />
@@ -835,10 +998,67 @@ export default function PlackLive({
               <div className="w-10 h-10 rounded-full bg-cyan-600/10 flex items-center justify-center border border-cyan-500/20">
                 <MonitorUp size={18} className="text-cyan-400" />
               </div>
-              <span className="text-[10px] font-semibold text-neutral-400 mt-2">Screen Share</span>
+              <span className={cn("text-[10px] font-semibold mt-2", theme === 'light' ? "text-neutral-600" : "text-neutral-400")}>Screen Share</span>
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* Action Row containing interactive feedback buttons */}
+        <div className="relative z-20 flex items-center justify-center gap-6 my-4 select-none pointer-events-auto shrink-0">
+          <button 
+            onClick={() => setIsLiked(!isLiked)}
+            className={cn(
+              "p-2.5 rounded-full transition-all duration-200 hover:scale-105 active:scale-90 border cursor-pointer",
+              isLiked 
+                ? "bg-indigo-600/20 border-indigo-500/35 text-indigo-400" 
+                : (theme === 'light' ? "bg-white border-neutral-200 text-neutral-400 hover:text-neutral-700 hover:border-neutral-300 shadow-sm" : "bg-neutral-900/50 border-white/5 text-neutral-400 hover:text-white hover:border-white/10")
+            )}
+            title="Like response"
+          >
+            <ThumbsUp size={18} />
+          </button>
+          <button 
+            onClick={() => setIsDisliked(!isDisliked)}
+            className={cn(
+              "p-2.5 rounded-full transition-all duration-200 hover:scale-105 active:scale-90 border cursor-pointer",
+              isDisliked 
+                ? "bg-red-600/20 border-red-500/35 text-red-400" 
+                : (theme === 'light' ? "bg-white border-neutral-200 text-neutral-400 hover:text-neutral-700 hover:border-neutral-300 shadow-sm" : "bg-neutral-900/50 border-white/5 text-neutral-400 hover:text-white hover:border-white/10")
+            )}
+            title="Dislike response"
+          >
+            <ThumbsDown size={18} />
+          </button>
+          <button 
+            onClick={() => {
+              const lastMsg = allMessages[allMessages.length - 1];
+              if (lastMsg) {
+                navigator.clipboard.writeText(lastMsg.content);
+                setCopyFeedback(true);
+                setTimeout(() => setCopyFeedback(false), 2000);
+                console.log("[CLIPBOARD COPIED]", lastMsg.content);
+              }
+            }}
+            className={cn(
+              "p-2.5 rounded-full transition-all duration-200 hover:scale-105 active:scale-90 border flex items-center gap-1 cursor-pointer",
+              copyFeedback 
+                ? "bg-emerald-600/20 border-emerald-500/35 text-emerald-400" 
+                : (theme === 'light' ? "bg-white border-neutral-200 text-neutral-400 hover:text-neutral-700 hover:border-neutral-300 shadow-sm" : "bg-neutral-900/50 border-white/5 text-neutral-400 hover:text-white hover:border-white/10")
+            )}
+            title="Copy response"
+          >
+            <Copy size={18} />
+          </button>
+          <button 
+            className={cn(
+              "p-2.5 rounded-full transition-all duration-200 hover:scale-105 active:scale-90 border cursor-pointer",
+              theme === 'light' ? "bg-white border-neutral-200 text-neutral-400 hover:text-neutral-700 hover:border-neutral-300 shadow-sm" : "bg-neutral-900/50 border-white/5 text-neutral-400 hover:text-white hover:border-white/10"
+            )}
+            title="More options"
+          >
+            <MoreHorizontal size={18} />
+          </button>
+        </div>
 
         {/* State / Activity Indicator text with smooth transition */}
         <div className="relative z-20 shrink-0 h-8 flex items-center justify-center select-none my-1">
@@ -855,11 +1075,15 @@ export default function PlackLive({
                   ? "text-neutral-500"
                   : voiceState === 'Listening'
                     ? "text-blue-400"
-                    : voiceState === 'Thinking'
-                      ? "text-purple-400"
-                      : voiceState === 'Speaking'
-                        ? "text-indigo-400"
-                        : "text-neutral-500"
+                    : voiceState === 'Transcribing'
+                      ? "text-amber-500"
+                      : voiceState === 'Thinking'
+                        ? "text-purple-400"
+                        : voiceState === 'Streaming Response'
+                          ? "text-pink-400 animate-pulse"
+                          : voiceState === 'Speaking'
+                            ? "text-indigo-400"
+                            : "text-neutral-500"
               )}
             >
               {voiceState === 'Thinking' && !isMuted && (
@@ -868,15 +1092,31 @@ export default function PlackLive({
               {voiceState === 'Listening' && !isMuted && (
                 <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-ping" />
               )}
+              {voiceState === 'Transcribing' && !isMuted && (
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+              )}
               <span>
-                {isMuted ? "Muted" : voiceState === 'Ready' ? "Ready" : voiceState}
+                {isMuted 
+                  ? "Muted" 
+                  : voiceState === 'Ready' 
+                    ? "Ready" 
+                    : voiceState === 'Streaming Response'
+                      ? "Generating response"
+                      : voiceState === 'Connection Lost'
+                        ? "Connection lost"
+                        : voiceState}
               </span>
             </motion.div>
           </AnimatePresence>
         </div>
 
         {/* Bottom Control Bar Row */}
-        <footer className="relative z-20 shrink-0 flex flex-col items-center justify-center pb-8 md:pb-12 pt-4 px-6 bg-gradient-to-t from-black via-black/80 to-transparent">
+        <footer className={cn(
+          "relative z-20 shrink-0 flex flex-col items-center justify-center pb-8 md:pb-12 pt-4 px-6",
+          theme === 'light' 
+            ? "bg-gradient-to-t from-white via-white/90 to-transparent" 
+            : "bg-gradient-to-t from-black via-black/80 to-transparent"
+        )}>
           <div className="flex items-center justify-center gap-4 md:gap-8 w-full max-w-xl">
             
             {/* Camera Toggle Button */}
@@ -886,7 +1126,7 @@ export default function PlackLive({
                 "flex items-center justify-center w-12 h-12 md:w-14 md:h-14 rounded-full transition-all duration-300 active:scale-90 border cursor-pointer pointer-events-auto shadow-lg",
                 isCameraOn 
                   ? "bg-blue-600/25 border-blue-500/35 text-blue-400 hover:bg-blue-600/35"
-                  : "bg-neutral-900 border-white/5 text-neutral-400 hover:text-white hover:bg-neutral-800"
+                  : (theme === 'light' ? "bg-white border-neutral-200 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-50 shadow-sm" : "bg-neutral-900 border-white/5 text-neutral-400 hover:text-white hover:bg-neutral-800")
               )}
               title={isCameraOn ? "Turn Camera Off" : "Turn Camera On"}
             >
@@ -900,7 +1140,7 @@ export default function PlackLive({
                 "flex items-center justify-center w-12 h-12 md:w-14 md:h-14 rounded-full transition-all duration-300 active:scale-90 border cursor-pointer pointer-events-auto shadow-lg",
                 isScreenSharing 
                   ? "bg-cyan-600/25 border-cyan-500/35 text-cyan-400 hover:bg-cyan-600/35"
-                  : "bg-neutral-900 border-white/5 text-neutral-400 hover:text-white hover:bg-neutral-800"
+                  : (theme === 'light' ? "bg-white border-neutral-200 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-50 shadow-sm" : "bg-neutral-900 border-white/5 text-neutral-400 hover:text-white hover:bg-neutral-800")
               )}
               title={isScreenSharing ? "Stop Sharing Screen" : "Share Screen"}
             >
@@ -919,7 +1159,7 @@ export default function PlackLive({
                 "flex items-center justify-center w-12 h-12 md:w-14 md:h-14 rounded-full transition-all duration-300 active:scale-90 border cursor-pointer pointer-events-auto shadow-lg",
                 isMuted 
                   ? "bg-red-600/25 border-red-500/35 text-red-400 hover:bg-red-600/35 animate-pulse"
-                  : "bg-neutral-900 border-white/5 text-neutral-400 hover:text-white hover:bg-neutral-800"
+                  : (theme === 'light' ? "bg-white border-neutral-200 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-50 shadow-sm" : "bg-neutral-900 border-white/5 text-neutral-400 hover:text-white hover:bg-neutral-800")
               )}
               title={isMuted ? "Unmute Microphone" : "Mute Microphone"}
             >

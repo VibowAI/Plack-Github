@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-img-element */
 import React from 'react';
 
 export default function Image({ src, alt, width, height, fill, className, priority, ...props }: any) {

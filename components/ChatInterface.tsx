@@ -121,14 +121,6 @@ interface Message {
     interests?: string;
     projectTypes?: string;
   };
-  zoomAction?: {
-    type: 'create' | 'update' | 'cancel' | 'list';
-    params: any;
-    confirmed?: boolean;
-    executed?: boolean;
-    error?: string;
-    result?: any;
-  };
 }
 
 interface ErrorReport {
@@ -216,56 +208,6 @@ function extractDocumentBlock(fullText: string): ExtractedDocument {
   };
 }
 
-interface ExtractedZoomAction {
-  hasAction: boolean;
-  type?: 'create' | 'update' | 'cancel' | 'list';
-  params?: any;
-  cleanText: string;
-}
-
-function extractZoomAction(fullText: string): ExtractedZoomAction {
-  if (!fullText) return { hasAction: false, cleanText: '' };
-  
-  // Try square bracket format: [ZOOM_ACTION:type:json]
-  const squareRegex = /\[ZOOM_(CONFIRM_REQUIRED|ACTION):(\w+):({.*?})\]/i;
-  const squareMatch = fullText.match(squareRegex);
-  
-  if (squareMatch) {
-    const type = squareMatch[2] as any;
-    let params = {};
-    try {
-      params = JSON.parse(squareMatch[3]);
-    } catch (e) {
-      console.error("Failed to parse Zoom action JSON", e);
-    }
-    const cleanText = fullText.replace(/\[ZOOM_(CONFIRM_REQUIRED|ACTION):[\s\S]*?\]/gi, '').trim();
-    return { hasAction: true, type, params, cleanText };
-  }
-
-  // Try XML-style format: <zoom_action type="..." data='...' />
-  const xmlRegex = /<zoom_action\s+type=["'](\w+)["'](?:\s+data|params)=["']([\s\S]*?)["']\s*\/?>/i;
-  const xmlMatch = fullText.match(xmlRegex);
-
-  if (xmlMatch) {
-    const type = xmlMatch[1] as any;
-    let params = {};
-    try {
-      params = JSON.parse(xmlMatch[2]);
-    } catch (e) {
-      // Try unescaping single quotes if it was data='...'
-      try {
-        params = JSON.parse(xmlMatch[2].replace(/'/g, '"'));
-      } catch (e2) {
-        console.error("Failed to parse XML Zoom action JSON", e2);
-      }
-    }
-    const cleanText = fullText.replace(/<zoom_action[\s\S]*?\/>/gi, '').trim();
-    return { hasAction: true, type, params, cleanText };
-  }
-
-  return { hasAction: false, cleanText: fullText };
-}
-
 // AI Activity Panel Component
 const AIActivityPanel = ({ actionName, theme, icon: Icon, colorClass }: { actionName: string, theme: string, icon?: any, colorClass?: string }) => {
   const IconComponent = Icon || Sparkles;
@@ -294,147 +236,6 @@ const AIActivityPanel = ({ actionName, theme, icon: Icon, colorClass }: { action
         <span className="w-1 h-1 rounded-full bg-current animate-bounce" style={{ animationDelay: '150ms' }} />
         <span className="w-1 h-1 rounded-full bg-current animate-bounce" style={{ animationDelay: '300ms' }} />
       </span>
-    </div>
-  );
-};
-
-// Zoom Action Card Component
-const ZoomActionCard = ({ action, onConfirm, onCancel, onRetry, onAnalyze, theme }: { 
-  action: any, 
-  onConfirm: () => void, 
-  onCancel: () => void, 
-  onRetry?: () => void,
-  onAnalyze?: () => void,
-  theme: string 
-}) => {
-  const status = action.status || 'pending';
-  const isAccepted = status === 'accepted' || action.executed;
-  const isRejected = status === 'rejected';
-
-  // Extract meeting data from various possible structures
-  const meeting = action.result || action.params || action;
-  const topic = meeting.topic || meeting.name || 'Zoom Meeting';
-  const startTime = meeting.startTime || meeting.start_time;
-  const duration = meeting.duration;
-  const meetingId = meeting.meetingId || meeting.id;
-  const joinUrl = meeting.join_url || meeting.joinUrl;
-  const host = meeting.host_email || meeting.host;
-  const meetingStatus = meeting.status; // Zoom status like 'waiting', 'started', etc.
-  
-  if (isRejected) return null;
-
-  const isLive = meetingStatus === 'started' || meetingStatus === 'active' || meetingStatus === 'in_progress';
-
-  return (
-    <div className={cn(
-      "p-5 rounded-[24px] border max-w-[340px] w-full my-3 animate-in fade-in slide-in-from-bottom-3 duration-500",
-      theme === 'light' ? "bg-white border-neutral-200 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)]" : "bg-neutral-900 border-neutral-800 shadow-[0_10px_30px_-10px_rgba(0,0,0,0.5)]"
-    )}>
-      {/* Header with Title and Live Badge */}
-      <div className="flex items-start justify-between mb-4">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            <div className="w-6 h-6 rounded-lg bg-blue-500 flex items-center justify-center shrink-0">
-              <Video size={13} className="text-white" />
-            </div>
-            <span className="text-[11px] font-bold tracking-widest uppercase opacity-40">Meeting Card</span>
-          </div>
-          <h4 className="text-[16px] font-bold tracking-tight leading-tight mb-1 truncate">
-            {topic}
-          </h4>
-          {host && <p className="text-[11px] opacity-50 truncate font-medium">Host: {host}</p>}
-        </div>
-        
-        {isLive && (
-          <div className="bg-red-500 text-white px-2 py-1 rounded-full flex items-center gap-1 animate-pulse shrink-0">
-            <div className="w-1.5 h-1.5 rounded-full bg-white" />
-            <span className="text-[10px] font-bold">LIVE NOW</span>
-          </div>
-        )}
-      </div>
-
-      {/* Meeting Details Bento */}
-      <div className={cn(
-        "grid grid-cols-2 gap-2 mb-5 p-3 rounded-2xl border",
-        theme === 'light' ? "bg-neutral-50/50 border-neutral-100" : "bg-white/5 border-white/5"
-      )}>
-        <div className="space-y-0.5">
-          <p className="text-[10px] uppercase font-bold opacity-30 tracking-wider">Date</p>
-          <p className="text-[12px] font-bold">
-            {startTime ? new Date(startTime).toLocaleDateString([], { month: 'short', day: 'numeric' }) : 'TBD'}
-          </p>
-        </div>
-        <div className="space-y-0.5">
-          <p className="text-[10px] uppercase font-bold opacity-30 tracking-wider">Time</p>
-          <p className="text-[12px] font-bold">
-            {startTime ? new Date(startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'TBD'}
-          </p>
-        </div>
-        {duration && (
-          <div className="space-y-0.5">
-            <p className="text-[10px] uppercase font-bold opacity-30 tracking-wider">Duration</p>
-            <p className="text-[12px] font-bold">{duration} min</p>
-          </div>
-        )}
-        <div className="space-y-0.5">
-          <p className="text-[10px] uppercase font-bold opacity-30 tracking-wider">Status</p>
-          <p className={cn(
-            "text-[12px] font-bold capitalize",
-            isLive ? "text-red-500" : "text-neutral-500"
-          )}>
-            {meetingStatus || 'Scheduled'}
-          </p>
-        </div>
-      </div>
-
-      {/* Primary Actions */}
-      <div className="space-y-2">
-        {joinUrl && (
-          <a 
-            href={joinUrl} 
-            target="_blank" 
-            rel="noopener noreferrer"
-            className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl bg-blue-600 text-white text-[13px] font-bold hover:bg-blue-500 transition-all shadow-lg shadow-blue-500/20 active:scale-[0.98]"
-          >
-            <Video size={14} />
-            Join Meeting
-          </a>
-        )}
-
-        <div className="grid grid-cols-2 gap-2">
-          <button 
-            onClick={() => onAnalyze && onAnalyze()}
-            className={cn(
-              "flex items-center justify-center gap-1.5 py-2 rounded-xl text-[11.5px] font-bold transition-all border cursor-pointer",
-              theme === 'light' ? "bg-white border-neutral-200 hover:bg-neutral-50" : "bg-neutral-800 border-neutral-700 hover:bg-neutral-700"
-            )}
-          >
-            <Brain size={13} />
-            Analyze
-          </button>
-          <button 
-            onClick={() => {/* Trigger Summary logic */}}
-            className={cn(
-              "flex items-center justify-center gap-1.5 py-2 rounded-xl text-[11.5px] font-bold transition-all border cursor-pointer",
-              theme === 'light' ? "bg-white border-neutral-200 hover:bg-neutral-50" : "bg-neutral-800 border-neutral-700 hover:bg-neutral-700"
-            )}
-          >
-            <FileText size={13} />
-            Summary
-          </button>
-        </div>
-
-        <button 
-          onClick={() => {/* Trigger Action Items logic */}}
-          className={cn(
-            "flex items-center justify-center gap-1.5 w-full py-2 rounded-xl text-[11.5px] font-bold transition-all border cursor-pointer",
-            theme === 'light' ? "bg-white border-neutral-200 hover:bg-neutral-50" : "bg-neutral-800 border-neutral-700 hover:bg-neutral-700"
-          )}
-        >
-          <CheckSquare size={13} />
-          Extract Action Items
-        </button>
-      </div>
     </div>
   );
 };
@@ -635,216 +436,6 @@ export default function Home() {
   const [isManageExpanded, setIsManageExpanded] = useState(false);
   const [draftRestoredNote, setDraftRestoredNote] = useState<string | null>(null);
 
-  // Zoom Integration States & Handlers
-  const [zoomEmail, setZoomEmail] = useState<string | null>(null);
-  const [isZoomModeEnabled, setIsZoomModeEnabled] = useState<boolean>(true);
-  const [isZoomLoading, setIsZoomLoading] = useState<boolean>(false);
-  const [zoomPendingActions, setZoomPendingActions] = useState<any[]>([]);
-
-  const fetchZoomPendingActions = useCallback(async (chatId: string) => {
-    if (!session?.access_token) return;
-    try {
-      const res = await fetch(`/api/zoom/pending-actions?chatId=${chatId}`, {
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`
-        }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setZoomPendingActions(data.actions || []);
-      }
-    } catch (err) {
-      console.error('[ZOOM] Failed to fetch pending actions:', err);
-    }
-  }, [session?.access_token]);
-
-  const createPendingAction = useCallback(async (messageId: string, zoom: any) => {
-    if (!activeChatId || !session?.access_token) return;
-    try {
-      const res = await fetch('/api/zoom/pending-actions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`
-        },
-        body: JSON.stringify({
-          chatId: activeChatId,
-          messageId,
-          actionType: zoom.type,
-          payload: zoom.params
-        })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setZoomPendingActions(prev => {
-          // Avoid duplicates
-          if (prev.some(a => a.id === data.action.id)) return prev;
-          return [...prev, data.action];
-        });
-      }
-    } catch (err) {
-      console.error('[ZOOM] Failed to create pending action:', err);
-    }
-  }, [activeChatId, session?.access_token]);
-
-  // Sync zoomPendingActions to messages state
-  useEffect(() => {
-    if (!messages.length || !zoomPendingActions.length) return;
-    
-    setMessages(prev => {
-      let changed = false;
-      const next = prev.map(msg => {
-        const zoom = extractZoomAction(msg.content);
-        if (zoom.hasAction) {
-          const pending = zoomPendingActions.find(a => a.message_id === msg.id);
-          if (pending) {
-            // Update message with latest DB status
-            const existingAction = msg.zoomAction;
-            if (!existingAction || existingAction.status !== pending.status || existingAction.id !== pending.id) {
-              changed = true;
-              return {
-                ...msg,
-                zoomAction: {
-                  ...zoom,
-                  id: pending.id,
-                  status: pending.status,
-                  confirmed: pending.status === 'accepted',
-                  executed: pending.status === 'accepted' || pending.status === 'failed',
-                  error: pending.status === 'failed' ? (pending.payload?.error || 'Execution failed') : undefined,
-                  result: pending.status === 'accepted' ? pending.payload?.result : undefined
-                }
-              };
-            }
-          }
-        }
-        return msg;
-      });
-      return changed ? next : prev;
-    });
-  }, [zoomPendingActions, messages.length]);
-
-  // Detect new confirmations that need to be persisted
-  useEffect(() => {
-    if (!activeChatId || isStreaming) return;
-    
-    messages.forEach(msg => {
-      if (msg.role === 'model' && !msg.isStreaming) {
-        const zoom = extractZoomAction(msg.content);
-        if (zoom.hasAction) {
-          const exists = zoomPendingActions.some(a => a.message_id === msg.id);
-          if (!exists) {
-             createPendingAction(msg.id, zoom);
-          }
-        }
-      }
-    });
-  }, [messages, activeChatId, isStreaming, zoomPendingActions, createPendingAction]);
-
-  const fetchConnectionStatuses = async () => {
-    if (!session?.access_token) return;
-    try {
-      const res = await fetch('/api/connections/status', {
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`
-        }
-      });
-      if (res.ok) {
-        const data = await res.json() as any;
-        const connections = data.connections || [];
-        const zoomConn = connections.find((c: any) => c.provider === 'zoom');
-        if (zoomConn) {
-          setZoomEmail(zoomConn.accountEmail);
-        } else {
-          setZoomEmail(null);
-        }
-      }
-    } catch (err) {
-      console.error('[ZOOM] Failed to fetch connection statuses:', err);
-    }
-  };
-
-  const handleConnectZoom = async () => {
-    if (!session?.access_token) {
-      alert('Please sign in first to connect services.');
-      return;
-    }
-    try {
-      setIsZoomLoading(true);
-      const res = await fetch('/api/auth/zoom', {
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-          'Accept': 'application/json'
-        }
-      });
-      if (!res.ok) {
-        throw new Error(await res.text());
-      }
-      const data = await res.json() as any;
-      if (!data.url) {
-        throw new Error('OAuth URL not returned from server');
-      }
-
-      const width = 600;
-      const height = 700;
-      const left = window.screenX + (window.innerWidth - width) / 2;
-      const top = window.screenY + (window.innerHeight - height) / 2;
-      
-      const popup = window.open(
-        data.url,
-        'Connect Zoom',
-        `width=${width},height=${height},left=${left},top=${top},status=no,resizable=yes`
-      );
-
-      const handleOAuthMessage = (event: MessageEvent) => {
-        if (event.data && event.data.type === 'ZOOM_CONNECTED') {
-          if (event.data.success) {
-            setZoomEmail(event.data.email || 'Connected');
-            fetchConnectionStatuses();
-          } else {
-            alert(`Unable to connect your Zoom account. Please try again. Error: ${event.data.error || 'Unknown'}`);
-          }
-          window.removeEventListener('message', handleOAuthMessage);
-        }
-      };
-
-      window.addEventListener('message', handleOAuthMessage);
-    } catch (err: any) {
-      console.error('[ZOOM] Connection failed:', err);
-      alert(`Unable to connect your Zoom account. Please try again.`);
-    } finally {
-      setIsZoomLoading(false);
-    }
-  };
-
-  const handleDisconnectZoom = async () => {
-    if (!session?.access_token) return;
-    if (!confirm('Are you sure you want to disconnect Zoom? This will revoke Plack AI access to manage meetings.')) return;
-    
-    try {
-      setIsZoomLoading(true);
-      const res = await fetch('/api/connections/disconnect', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`
-        },
-        body: JSON.stringify({ provider: 'zoom' })
-      });
-      if (res.ok) {
-        setZoomEmail(null);
-        fetchConnectionStatuses();
-      } else {
-        throw new Error(await res.text());
-      }
-    } catch (err) {
-      console.error('[ZOOM] Disconnection failed:', err);
-      alert('Failed to disconnect Zoom. Please try again.');
-    } finally {
-      setIsZoomLoading(false);
-    }
-  };
-
-
   const [isLogoutConfirmOpen, setIsLogoutConfirmOpen] = useState(false);
   const [isFullscreenInputOpen, setIsFullscreenInputOpen] = useState(false);
   const [isLiveModeOpen, setIsLiveModeOpen] = useState(false);
@@ -943,7 +534,6 @@ export default function Home() {
   
   useEffect(() => {
     if (session?.user?.user_metadata?.full_name && !displayName) {
-       // eslint-disable-next-line react-hooks/set-state-in-effect
        setDisplayName(session.user.user_metadata.full_name);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1488,11 +1078,6 @@ export default function Home() {
 
 
 
-  // --- CONNECTIONS STATUS RECOVERY ---
-  useEffect(() => {
-    fetchConnectionStatuses();
-  }, [session]);
-
   const startupHandledRef = useRef(false);
 
   // Sync route param chat ID with state and load messages automatically
@@ -1668,9 +1253,6 @@ export default function Home() {
 
       const msgs = await getMessages(id);
       
-      // Load Zoom pending actions
-      fetchZoomPendingActions(id);
-
       // Load reactions
       if (session?.user?.id) {
         try {
@@ -2112,57 +1694,6 @@ export default function Home() {
   const handleCopyMessage = (content: string) => {
     navigator.clipboard.writeText(content);
     showToast("Message copied to clipboard");
-  };
-
-  const handleExecuteZoomAction = async (messageId: string, actionType: string, params: any) => {
-    const pendingAction = zoomPendingActions.find(a => a.message_id === messageId);
-    const pendingActionId = pendingAction?.id;
-
-    setMessages(prev => prev.map(m => 
-      m.id === messageId ? { ...m, zoomAction: { ...m.zoomAction, confirmed: true, executed: false } } : m
-    ));
-
-    try {
-      const res = await fetch('/api/zoom/execute', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: actionType, ...params, pendingActionId })
-      });
-
-      const data = await res.json();
-      if (res.ok) {
-        // Refresh pending actions from DB to get the latest status
-        if (activeChatId) fetchZoomPendingActions(activeChatId);
-        showToast("Zoom action completed successfully");
-      } else {
-        throw new Error(data.error || 'Failed to execute Zoom action');
-      }
-    } catch (error: any) {
-      // Refresh pending actions to show failure state
-      if (activeChatId) fetchZoomPendingActions(activeChatId);
-      showToast(error.message, "error");
-    }
-  };
-
-  const handleRejectZoomAction = async (messageId: string) => {
-    const pendingAction = zoomPendingActions.find(a => a.message_id === messageId);
-    if (!pendingAction) return;
-
-    try {
-      const res = await fetch(`/api/zoom/pending-actions/${pendingAction.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'rejected' })
-      });
-      
-      if (res.ok) {
-        setZoomPendingActions(prev => prev.map(a => a.id === pendingAction.id ? { ...a, status: 'rejected' } : a));
-        showToast("Action rejected");
-      }
-    } catch (err) {
-      console.error('[ZOOM] Failed to reject action:', err);
-      showToast("Failed to reject action", "error");
-    }
   };
 
   const handleFeedback = async (msgId: string, type: 'like' | 'dislike') => {
@@ -3041,7 +2572,6 @@ export default function Home() {
               chatId: streamChatId,
               messageId: assistantMsgId,
               userId: session?.user?.id,
-              isZoomConnected: !!zoomEmail && isZoomModeEnabled,
               autoSaveMemories: autoSaveMemories,
               systemInstructionOverride: `AI Personality Tone to employ: ${targetPersonalityTone}\n` +
                 (customInstructions.trim() ? `User Custom Instructions to follow closely for every answer: "${customInstructions.trim()}"\n` : "") +
@@ -4528,7 +4058,6 @@ export default function Home() {
         theme={theme}
         user={session?.user}
         onOpenSettings={() => setIsSettingsOpen(true)}
-        onOpenConnections={() => router.push('/connections')}
         onLogoutClick={() => setIsLogoutConfirmOpen(true)}
         width={sidebarWidth}
         onWidthChange={setSidebarWidth}
@@ -5118,15 +4647,14 @@ export default function Home() {
                             <div className="py-2">
                               <AIActivityPanel 
                                 theme={theme}
-                                actionName={message.isDeepResearch ? "Deep Research Processing..." : isWebSearchEnabled ? "Searching the web..." : isZoomModeEnabled ? "Accessing Zoom..." : "Understanding request..."}
-                                icon={message.isDeepResearch ? Cpu : isWebSearchEnabled ? Search : isZoomModeEnabled ? Video : BrainCircuit}
-                                colorClass={message.isDeepResearch ? "bg-purple-500/10 text-purple-500" : isWebSearchEnabled ? "bg-indigo-500/10 text-indigo-500" : isZoomModeEnabled ? "bg-blue-500/10 text-blue-500" : undefined}
+                                actionName={message.isDeepResearch ? "Deep Research Processing..." : isWebSearchEnabled ? "Searching the web..." : "Understanding request..."}
+                                icon={message.isDeepResearch ? Cpu : isWebSearchEnabled ? Search : BrainCircuit}
+                                colorClass={message.isDeepResearch ? "bg-purple-500/10 text-purple-500" : isWebSearchEnabled ? "bg-indigo-500/10 text-indigo-500" : undefined}
                               />
                             </div>
                           ) : (
                             (() => {
-                              const zoom = extractZoomAction(contentToRender);
-                              const parsedDoc = extractDocumentBlock(zoom.cleanText);
+                              const parsedDoc = extractDocumentBlock(contentToRender);
                               
                               return (
                                 <div className="flex flex-col gap-4">
@@ -5134,47 +4662,6 @@ export default function Home() {
                                     <MarkdownRenderer content={parsedDoc.cleanText} theme={theme} />
                                   )}
                                   
-                                  {zoom.hasAction && (
-                                    <div className="flex flex-col gap-3">
-                                      {Array.isArray(zoom.params) ? (
-                                        zoom.params.map((m: any, idx: number) => (
-                                          <ZoomActionCard 
-                                            key={m.id || idx}
-                                            action={m}
-                                            theme={theme}
-                                            onConfirm={() => handleExecuteZoomAction(message.id, zoom.type!, m)}
-                                            onCancel={() => handleRejectZoomAction(message.id)}
-                                            onRetry={() => handleExecuteZoomAction(message.id, zoom.type!, m)}
-                                            onAnalyze={() => {
-                                              const meetingId = m.id || m.meetingId;
-                                              if (meetingId) {
-                                                handleSubmit(undefined, `Analyze Zoom meeting ID ${meetingId}. Provide an Executive Summary, Key Topics, Important Decisions, Action Items, Participants, Timeline, Questions Asked, Open Issues, Follow-ups, and Risks. Use real meeting data from the recording and transcript.`);
-                                              } else {
-                                                showToast("Could not determine Meeting ID to analyze.");
-                                              }
-                                            }}
-                                          />
-                                        ))
-                                      ) : (
-                                        <ZoomActionCard 
-                                          action={message.zoomAction || zoom}
-                                          theme={theme}
-                                          onConfirm={() => handleExecuteZoomAction(message.id, zoom.type!, zoom.params)}
-                                          onCancel={() => handleRejectZoomAction(message.id)}
-                                          onRetry={() => handleExecuteZoomAction(message.id, zoom.type!, zoom.params)}
-                                          onAnalyze={() => {
-                                            const meetingId = (message.zoomAction || zoom).result?.id || (message.zoomAction || zoom).params?.meetingId || (message.zoomAction || zoom).params?.id;
-                                            if (meetingId) {
-                                              handleSubmit(undefined, `Analyze Zoom meeting ID ${meetingId}. Provide an Executive Summary, Key Topics, Important Decisions, Action Items, Participants, Timeline, Questions Asked, Open Issues, Follow-ups, and Risks. Use real meeting data from the recording and transcript.`);
-                                            } else {
-                                              showToast("Could not determine Meeting ID to analyze.");
-                                            }
-                                          }}
-                                        />
-                                      )}
-                                    </div>
-                                  )}
-
                                   {parsedDoc.hasDocument && (
                                     <InlineDocumentBlock 
                                       id={parsedDoc.id}
@@ -5184,12 +4671,6 @@ export default function Home() {
                                       theme={theme} 
                                       isStreaming={message.isStreaming && isLatestVersion}
                                     />
-                                  )}
-
-                                  {message.zoomAction?.result?.analysis && (
-                                    <div className="mt-2 pl-4 border-l-[3px] border-blue-500/30 w-full overflow-hidden">
-                                      <MarkdownRenderer content={message.zoomAction.result.analysis} theme={theme} />
-                                    </div>
                                   )}
                                 </div>
                               );
@@ -5999,265 +5480,245 @@ export default function Home() {
                                 />
                               </button>
                             </div>
-
-                            {zoomEmail && (
-                              <div className="border-t border-neutral-100 dark:border-white/5 mt-2 pt-2 px-1">
-                                <span className="text-[9.5px] font-bold uppercase tracking-widest text-neutral-400 dark:text-neutral-500 block mb-2 px-1.5">
-                                  Connected Services
-                                </span>
-                                <div className="space-y-1">
-                                  {zoomEmail && (
-                                    <div
-                                      onClick={() => setIsZoomModeEnabled(!isZoomModeEnabled)}
-                                      className={cn(
-                                        "flex items-center justify-between gap-3 w-full text-left p-2.5 rounded-xl transition-all cursor-pointer hover:bg-neutral-100 dark:hover:bg-white/[0.05]",
-                                        theme === 'light' ? "text-neutral-800" : "text-neutral-100"
-                                      )}
-                                    >
-                                      <div className="flex items-center gap-3.5">
-                                        <div className={cn(
-                                          "w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-all duration-300",
-                                          isZoomModeEnabled
-                                            ? "bg-blue-500 text-white shadow-md shadow-blue-500/20"
-                                            : "bg-blue-500/10 text-blue-500"
-                                        )}>
-                                          <Video size={15} className="stroke-[2.2px]" />
-                                        </div>
-                                        <div className="flex flex-col text-left">
-                                          <span className="text-[13px] font-bold leading-none font-sans">
-                                            Zoom Assistant
-                                          </span>
-                                          <span className={cn("text-[11px] leading-tight mt-1 opacity-65", theme === 'light' ? "text-neutral-600" : "text-neutral-400")}>
-                                            Native meeting assistant
-                                          </span>
-                                        </div>
-                                      </div>
-                                      <button
-                                        type="button"
-                                        className={cn(
-                                          "w-8 h-4.5 rounded-full relative transition-colors duration-300 p-0.5 shrink-0",
-                                          isZoomModeEnabled ? "bg-blue-600" : "bg-neutral-300 dark:bg-neutral-700"
-                                        )}>
-                                        <motion.div
-                                          layout
-                                          initial={false}
-                                          animate={{ x: isZoomModeEnabled ? 14 : 0 }}
-                                          className="w-3.5 h-3.5 rounded-full bg-white shadow-sm"
-                                        />
-                                      </button>
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            )}
-
                           </motion.div>
 
-                          {/* 2. MOBILE BOTTOM PANEL (Compact overlay above input) */}
+                                           {/* BACKDROP for mobile attachment sheet */}
+                          <motion.div
+                            key="attachments-mobile-backdrop"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            onClick={() => setIsAttachmentMenuOpen(false)}
+                            className="fixed inset-0 bg-black/60 backdrop-blur-md z-[200] md:hidden pointer-events-auto"
+                          />
+
+                          {/* 2. MOBILE BOTTOM PANEL (Spring Draggable Bottom Sheet matching Sources design) */}
                           <motion.div
                             key="attachments-mobile-sheet"
-                            initial={{ opacity: 0, y: 20, scale: 0.95 }}
-                            animate={{ opacity: 1, y: 0, scale: 1 }}
-                            exit={{ opacity: 0, y: 20, scale: 0.95 }}
-                            transition={{ type: "spring", damping: 30, stiffness: 450 }}
+                            drag="y"
+                            dragConstraints={{ top: 0, bottom: 0 }}
+                            dragElastic={{ top: 0, bottom: 0.5 }}
+                            onDragEnd={(event, info) => {
+                              if (info.offset.y > 100 || info.velocity.y > 500) {
+                                setIsAttachmentMenuOpen(false);
+                              }
+                            }}
+                            initial={{ y: "100%" }}
+                            animate={{ y: 0 }}
+                            exit={{ y: "100%" }}
+                            transition={{ type: "spring", bounce: 0, duration: 0.4 }}
                             className={cn(
-                              "md:hidden absolute bottom-[72px] left-0 w-[calc(100vw-40px)] max-w-[320px] rounded-[24px] border p-3 flex flex-col gap-1 z-[50] shadow-[0_12px_40px_rgba(0,0,0,0.2)] select-none backdrop-blur-xl max-h-[400px] overflow-y-auto scrollbar-thin",
+                              "fixed bottom-0 left-0 right-0 z-[201] rounded-t-[32px] overflow-hidden flex flex-col border-t max-h-[85vh] h-[85vh] md:hidden pb-safe pointer-events-auto shadow-[0_-10px_40px_rgba(0,0,0,0.15)]",
                               theme === 'light' 
-                                ? "bg-white border-neutral-200/85 text-neutral-800" 
+                                ? "bg-white/95 border-neutral-200/80 shadow-[0_-10px_40px_rgba(0,0,0,0.1)] backdrop-blur-xl text-neutral-800" 
                                 : theme === 'cosmic'
-                                  ? "bg-[#0c0926] border-indigo-500/20 text-indigo-50"
-                                  : "bg-[#141416] border-neutral-800 text-white"
+                                  ? "bg-[#090616]/95 border-indigo-500/10 shadow-2xl shadow-black backdrop-blur-xl text-indigo-50"
+                                  : "bg-neutral-900/95 border-neutral-800 shadow-2xl shadow-black backdrop-blur-xl text-white"
                             )}
                           >
-                            <div className="px-3 py-1.5 flex justify-between items-center mb-0.5">
-                              <span className="font-sans font-bold text-[12px] opacity-50 uppercase tracking-wider">Tools & Modes</span>
+                            {/* Drag handle decoration */}
+                            <div className="flex justify-center p-3 shrink-0 cursor-grab active:cursor-grabbing">
+                              <div className={cn("w-12 h-1.5 rounded-full", theme === 'light' ? "bg-neutral-200" : "bg-neutral-700")} />
                             </div>
 
-                            {/* Camera */}
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setIsAttachmentMenuOpen(false);
-                                startCamera();
-                              }}
-                              className="flex items-center gap-4 w-full text-left p-2.5 rounded-xl hover:bg-neutral-100 dark:hover:bg-white/[0.05] active:scale-[0.98] transition-all cursor-pointer"
-                            >
-                              <div className="w-9 h-9 rounded-full bg-orange-500/10 text-orange-500 flex items-center justify-center shrink-0">
-                                <Camera size={16} className="stroke-[2.2px]" />
+                            {/* Bottom Sheet Header */}
+                            <div className={cn(
+                              "flex items-center justify-between px-5 pt-2 pb-4 border-b shrink-0",
+                              theme === 'light' ? "border-neutral-100" : (theme === 'cosmic' ? "border-indigo-500/10" : "border-neutral-800/50")
+                            )}>
+                              <div className="flex items-center gap-2.5">
+                                <span className={cn("font-bold text-[14px] uppercase tracking-wider opacity-60", theme === 'light' ? "text-neutral-600" : "text-neutral-300")}>
+                                  Tools & Modes
+                                </span>
                               </div>
-                              <span className="text-[13px] font-bold leading-none font-sans">Camera</span>
-                            </button>
+                              <button
+                                type="button"
+                                onClick={() => setIsAttachmentMenuOpen(false)}
+                                className={cn(
+                                  "p-2 rounded-xl transition-all duration-200 cursor-pointer active:scale-90",
+                                  theme === 'light' ? "hover:bg-neutral-100 text-neutral-400 hover:text-neutral-600" : "hover:bg-neutral-800 text-neutral-500 hover:text-neutral-300"
+                                )}
+                              >
+                                <X size={18} className="stroke-[2.5px]" />
+                              </button>
+                            </div>
 
-                            {/* Upload Files */}
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setIsAttachmentMenuOpen(false);
-                                filesInputRef.current?.click();
-                              }}
-                              className="flex items-center gap-4 w-full text-left p-2.5 rounded-xl hover:bg-neutral-100 dark:hover:bg-white/[0.05] active:scale-[0.98] transition-all cursor-pointer"
-                            >
-                              <div className="w-9 h-9 rounded-full bg-blue-500/10 text-blue-500 flex items-center justify-center shrink-0">
-                                <Paperclip size={16} className="stroke-[2.2px]" />
-                              </div>
-                              <span className="text-[13px] font-bold leading-none font-sans">Files</span>
-                            </button>
+                            {/* Content Menu List */}
+                            <div className="flex-1 overflow-y-auto p-5 space-y-4">
 
-                            {/* Use Memory */}
-                            {(() => {
-                              console.log("[MEMORY BUTTON RENDER] Rendering for Mobile");
-                              return (
+                              {/* Item 1: Upload Files */}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setIsAttachmentMenuOpen(false);
+                                  filesInputRef.current?.click();
+                                }}
+                                className={cn(
+                                  "flex items-center gap-4 w-full text-left p-3.5 rounded-[20px] transition-all cursor-pointer border active:scale-[0.98]",
+                                  theme === 'light'
+                                    ? "bg-neutral-50/50 border-neutral-150 hover:bg-neutral-100/50 text-neutral-800"
+                                    : "bg-white/[0.02] border-white/[0.04] hover:bg-white/[0.05] text-white"
+                                )}
+                              >
+                                <div className="w-10 h-10 rounded-full bg-blue-500/10 text-blue-500 flex items-center justify-center shrink-0">
+                                  <Paperclip size={18} className="stroke-[2.2px]" />
+                                </div>
+                                <div className="flex flex-col min-w-0">
+                                  <span className="text-[13px] font-bold font-sans">Upload Files</span>
+                                  <span className="text-[11px] opacity-60 mt-0.5">Docs, images, PDFs, CSVs</span>
+                                </div>
+                              </button>
+
+                              {/* Item 2: Web Search */}
+                              <div
+                                onClick={() => {
+                                  const nextVal = !isWebSearchEnabled;
+                                  setIsWebSearchEnabled(nextVal);
+                                  if (nextVal) {
+                                    setUseDeepResearch(false);
+                                  }
+                                }}
+                                className={cn(
+                                  "flex items-center justify-between gap-4 w-full text-left p-3.5 rounded-[20px] transition-all cursor-pointer border active:scale-[0.98]",
+                                  theme === 'light'
+                                    ? "bg-neutral-50/50 border-neutral-150 hover:bg-neutral-100/50 text-neutral-800"
+                                    : "bg-white/[0.02] border-white/[0.04] hover:bg-white/[0.05] text-white"
+                                )}
+                              >
+                                <div className="flex items-center gap-4">
+                                  <div className={cn(
+                                    "w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-colors duration-300",
+                                    isWebSearchEnabled ? "bg-indigo-500 text-white" : "bg-indigo-500/10 text-indigo-500"
+                                  )}>
+                                    <Search size={18} className="stroke-[2.2px]" />
+                                  </div>
+                                  <div className="flex flex-col min-w-0">
+                                    <span className="text-[13px] font-bold font-sans">Web Search</span>
+                                    <span className="text-[11px] opacity-60 mt-0.5">Real-time web browsing</span>
+                                  </div>
+                                </div>
                                 <button
                                   type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setIsAttachmentMenuOpen(false);
-                                    setIsMemoryPickerOpen(true);
-                                  }}
-                                  className="flex items-center gap-4 w-full text-left p-2.5 rounded-xl hover:bg-neutral-100 dark:hover:bg-white/[0.05] active:scale-[0.98] transition-all cursor-pointer"
-                                >
-                                  <div className="w-9 h-9 rounded-full bg-emerald-500/10 text-emerald-500 flex items-center justify-center shrink-0">
-                                    <BrainCircuit size={16} className="stroke-[2.2px]" />
-                                  </div>
-                                  <span className="text-[13px] font-bold leading-none font-sans">Use Memory</span>
+                                  className={cn(
+                                    "w-8 h-4.5 rounded-full relative transition-colors duration-300 p-0.5 shrink-0",
+                                    isWebSearchEnabled ? "bg-indigo-600" : "bg-neutral-300 dark:bg-neutral-700"
+                                  )}>
+                                  <div className={cn(
+                                    "w-3.5 h-3.5 rounded-full bg-white shadow-sm transition-transform duration-300",
+                                    isWebSearchEnabled ? "translate-x-[14px]" : "translate-x-0"
+                                  )} />
                                 </button>
-                              );
-                            })()}
-
-                            {/* Web Search */}
-                            <div
-                              onClick={() => {
-                                const nextVal = !isWebSearchEnabled;
-                                setIsWebSearchEnabled(nextVal);
-                                if (nextVal) {
-                                  setUseDeepResearch(false);
-                                }
-                              }}
-                              className="flex items-center justify-between gap-3 w-full text-left p-2.5 rounded-xl hover:bg-neutral-100 dark:hover:bg-white/[0.05] active:scale-[0.98] transition-all cursor-pointer"
-                            >
-                              <div className="flex items-center gap-4">
-                                <div className={cn(
-                                  "w-9 h-9 rounded-full flex items-center justify-center shrink-0",
-                                  isWebSearchEnabled ? "bg-indigo-500 text-white" : "bg-indigo-500/10 text-indigo-500"
-                                )}>
-                                  <Search size={16} className="stroke-[2.2px]" />
-                                </div>
-                                <span className="text-[13px] font-bold leading-none font-sans">Search</span>
                               </div>
-                              <button
-                                type="button"
-                                className={cn(
-                                  "w-8 h-4.5 rounded-full relative transition-colors duration-300 p-0.5 shrink-0",
-                                  isWebSearchEnabled ? "bg-indigo-600" : "bg-neutral-300 dark:bg-neutral-700"
-                                )}>
-                                <div className={cn(
-                                  "w-3.5 h-3.5 rounded-full bg-white shadow-sm transition-transform duration-300",
-                                  isWebSearchEnabled ? "translate-x-[14px]" : "translate-x-0"
-                                )} />
-                              </button>
-                            </div>
 
-                            {/* Deep Research */}
-                            <div
-                              onClick={async () => {
-                                if (!useDeepResearch) {
-                                  setIsWebSearchEnabled(false);
-                                  setActiveModel('ED1.7');
-                                  try {
-                                    const checkRes = await fetch("/api/usage/check", {
-                                      method: "POST",
-                                      headers: { "Content-Type": "application/json" },
-                                      body: JSON.stringify({ userId: session?.user?.id, actionType: "deep_research", model: "ED1.7" })
-                                    });
-                                    const checkData = await checkRes.json();
-                                    if (!checkData.allowed) {
-                                      setLimitCard({
-                                        actionType: "Deep Research",
-                                        resetIn: "tomorrow"
+                              {/* Item 3: Deep Research */}
+                              <div
+                                onClick={async () => {
+                                  if (!useDeepResearch) {
+                                    setIsWebSearchEnabled(false);
+                                    setActiveModel('ED1.7');
+                                    try {
+                                      const checkRes = await fetch("/api/usage/check", {
+                                        method: "POST",
+                                        headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({ userId: session?.user?.id, actionType: "deep_research", model: "ED1.7" })
                                       });
-                                      return;
+                                      const checkData = await checkRes.json();
+                                      if (!checkData.allowed) {
+                                        setLimitCard({
+                                          actionType: "Deep Research",
+                                          resetIn: "tomorrow"
+                                        });
+                                        return;
+                                      }
+                                    } catch (err) {
+                                      console.error(err);
                                     }
-                                  } catch (err) {
-                                    console.error(err);
+                                    setUseDeepResearch(true);
+                                  } else {
+                                    setUseDeepResearch(false);
                                   }
-                                  setUseDeepResearch(true);
-                                } else {
-                                  setUseDeepResearch(false);
-                                }
-                              }}
-                              className="flex items-center justify-between gap-3 w-full text-left p-2.5 rounded-xl hover:bg-neutral-100 dark:hover:bg-white/[0.05] active:scale-[0.98] transition-all cursor-pointer"
-                            >
-                              <div className="flex items-center gap-4">
-                                <div className={cn(
-                                  "w-9 h-9 rounded-full flex items-center justify-center shrink-0",
-                                  useDeepResearch ? "bg-purple-500 text-white" : "bg-purple-500/10 text-purple-500"
-                                )}>
-                                  <Cpu size={16} className="stroke-[2.2px]" />
+                                }}
+                                className={cn(
+                                  "flex items-center justify-between gap-4 w-full text-left p-3.5 rounded-[20px] transition-all cursor-pointer border active:scale-[0.98]",
+                                  theme === 'light'
+                                    ? "bg-neutral-50/50 border-neutral-150 hover:bg-neutral-100/50 text-neutral-800"
+                                    : "bg-white/[0.02] border-white/[0.04] hover:bg-white/[0.05] text-white"
+                                )}
+                              >
+                                <div className="flex items-center gap-4">
+                                  <div className={cn(
+                                    "w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-colors duration-300",
+                                    useDeepResearch ? "bg-purple-500 text-white" : "bg-purple-500/10 text-purple-500"
+                                  )}>
+                                    <Cpu size={18} className="stroke-[2.2px]" />
+                                  </div>
+                                  <div className="flex flex-col min-w-0">
+                                    <span className="text-[13px] font-bold font-sans">Deep Research</span>
+                                    <span className="text-[11px] opacity-60 mt-0.5">Multi-stage intelligent agent</span>
+                                  </div>
                                 </div>
-                                <span className="text-[13px] font-bold leading-none font-sans">Deep Research</span>
+                                <button
+                                  type="button"
+                                  className={cn(
+                                    "w-8 h-4.5 rounded-full relative transition-colors duration-300 p-0.5 shrink-0",
+                                    useDeepResearch ? "bg-purple-600" : "bg-neutral-300 dark:bg-neutral-700"
+                                  )}>
+                                  <div className={cn(
+                                    "w-3.5 h-3.5 rounded-full bg-white shadow-sm transition-transform duration-300",
+                                    useDeepResearch ? "translate-x-[14px]" : "translate-x-0"
+                                  )} />
+                                </button>
                               </div>
+
+                              {/* Item 4: Memory */}
                               <button
                                 type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setIsAttachmentMenuOpen(false);
+                                  setIsMemoryPickerOpen(true);
+                                }}
                                 className={cn(
-                                  "w-8 h-4.5 rounded-full relative transition-colors duration-300 p-0.5 shrink-0",
-                                  useDeepResearch ? "bg-purple-600" : "bg-neutral-300 dark:bg-neutral-700"
-                                )}>
-                                <div className={cn(
-                                  "w-3.5 h-3.5 rounded-full bg-white shadow-sm transition-transform duration-300",
-                                  useDeepResearch ? "translate-x-[14px]" : "translate-x-0"
-                                )} />
-                              </button>
-                            </div>
-
-                            {zoomEmail && (
-                              <div className="border-t border-neutral-100 dark:border-white/5 mt-2 pt-2 px-1 text-left">
-                                <span className="text-[9.5px] font-bold uppercase tracking-widest text-neutral-400 dark:text-neutral-500 block mb-2 px-1.5">
-                                  Connected Services
-                                </span>
-                                <div className="space-y-1">
-                                  {zoomEmail && (
-                                    <div
-                                      onClick={() => setIsZoomModeEnabled(!isZoomModeEnabled)}
-                                      className={cn(
-                                        "flex items-center justify-between gap-3 w-full text-left p-2.5 rounded-xl transition-all cursor-pointer hover:bg-neutral-100 dark:hover:bg-white/[0.05]",
-                                        theme === 'light' ? "text-neutral-800" : "text-neutral-100"
-                                      )}
-                                    >
-                                      <div className="flex items-center gap-4">
-                                        <div className={cn(
-                                          "w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-all duration-300",
-                                          isZoomModeEnabled
-                                            ? "bg-blue-500 text-white shadow-md shadow-blue-500/20"
-                                            : "bg-blue-500/10 text-blue-500"
-                                        )}>
-                                          <Video size={16} className="stroke-[2.2px]" />
-                                        </div>
-                                        <div className="flex flex-col text-left">
-                                          <span className="text-[13px] font-bold leading-none font-sans">
-                                            Zoom Assistant
-                                          </span>
-                                          <span className={cn("text-[11px] leading-tight mt-1 opacity-65", theme === 'light' ? "text-neutral-600" : "text-neutral-400")}>
-                                            Native meeting assistant
-                                          </span>
-                                        </div>
-                                      </div>
-                                      <button
-                                        type="button"
-                                        className={cn(
-                                          "w-8 h-4.5 rounded-full relative transition-colors duration-300 p-0.5 shrink-0",
-                                          isZoomModeEnabled ? "bg-blue-600" : "bg-neutral-300 dark:bg-neutral-700"
-                                        )}>
-                                        <div className={cn(
-                                          "w-3.5 h-3.5 rounded-full bg-white shadow-sm transition-transform duration-300",
-                                          isZoomModeEnabled ? "translate-x-[14px]" : "translate-x-0"
-                                        )} />
-                                      </button>
-                                    </div>
-                                  )}
+                                  "flex items-center gap-4 w-full text-left p-3.5 rounded-[20px] transition-all cursor-pointer border active:scale-[0.98]",
+                                  theme === 'light'
+                                    ? "bg-neutral-50/50 border-neutral-150 hover:bg-neutral-100/50 text-neutral-800"
+                                    : "bg-white/[0.02] border-white/[0.04] hover:bg-white/[0.05] text-white"
+                                )}
+                              >
+                                <div className="w-10 h-10 rounded-full bg-emerald-500/10 text-emerald-500 flex items-center justify-center shrink-0">
+                                  <BrainCircuit size={18} className="stroke-[2.2px]" />
                                 </div>
-                              </div>
-                            )}
+                                <div className="flex flex-col min-w-0">
+                                  <span className="text-[13px] font-bold font-sans">Memory</span>
+                                  <span className="text-[11px] opacity-60 mt-0.5">Inject customized memory context</span>
+                                </div>
+                              </button>
 
+                              {/* Item 5: Document */}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setIsAttachmentMenuOpen(false);
+                                  setInputValue("Create a document about: ");
+                                  textareaRef.current?.focus();
+                                }}
+                                className={cn(
+                                  "flex items-center gap-4 w-full text-left p-3.5 rounded-[20px] transition-all cursor-pointer border active:scale-[0.98]",
+                                  theme === 'light'
+                                    ? "bg-neutral-50/50 border-neutral-150 hover:bg-neutral-100/50 text-neutral-800"
+                                    : "bg-white/[0.02] border-white/[0.04] hover:bg-white/[0.05] text-white"
+                                )}
+                              >
+                                <div className="w-10 h-10 rounded-full bg-indigo-500/10 text-indigo-500 flex items-center justify-center shrink-0">
+                                  <FileText size={18} className="stroke-[2.2px]" />
+                                </div>
+                                <div className="flex flex-col min-w-0">
+                                  <span className="text-[13px] font-bold font-sans">Document</span>
+                                  <span className="text-[11px] opacity-60 mt-0.5">Author elegant, styled documents</span>
+                                </div>
+                              </button>
+
+                            </div>
                           </motion.div>
                         </>
                       )}

@@ -278,7 +278,7 @@ export default function WelcomePage() {
         <div className="flex gap-8 items-center text-[13px] text-neutral-500 font-mono">
           <div className="flex items-center gap-1.5">
             <Check size={14} className="text-indigo-400" />
-            <span>Encrypted Connections</span>
+            <span>Secure Data Access</span>
           </div>
           <div className="flex items-center gap-1.5">
             <Check size={14} className="text-indigo-400" />

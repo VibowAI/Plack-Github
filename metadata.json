@@ -1,6 +1,6 @@
 {
   "name": "Plack AI",
-  "description": "A premium, futuristic, minimal AI assistant.",
+  "description": "A minimal workspace for deep analysis, web research, and premium AI interactions.",
   "requestFramePermissions": ["microphone", "camera"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

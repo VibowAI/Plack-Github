@@ -4,7 +4,6 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AppProvider } from '@/context/AppContext';
 import { fetchRuntimeConfig } from '@/lib/supabase/client';
 import Page from '@/app/page';
-import ConnectionsPage from '@/app/connections/page';
 import WelcomePage from '@/app/welcome/page';
 import PrivacyPolicyPage from '@/app/privacypolicy/page';
 import TermsOfServicePage from '@/app/termsofservice/page';
@@ -21,7 +20,6 @@ async function init() {
           <Routes>
             <Route path="/" element={<Page />} />
             <Route path="/chat/:id" element={<Page />} />
-            <Route path="/connections" element={<ConnectionsPage />} />
             <Route path="/welcome" element={<WelcomePage />} />
             <Route path="/privacypolicy" element={<PrivacyPolicyPage />} />
             <Route path="/termsofservice" element={<TermsOfServicePage />} />

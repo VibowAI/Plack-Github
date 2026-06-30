@@ -67,7 +67,6 @@ interface SidebarProps {
   onLogoutClick?: () => void;
   width?: number;
   onWidthChange?: (width: number) => void;
-  onOpenConnections?: () => void;
 }
 
 // Subcomponent to highlight matching text query characters
@@ -105,8 +104,7 @@ export default function Sidebar({
   onOpenSettings,
   onLogoutClick,
   width = 280,
-  onWidthChange,
-  onOpenConnections
+  onWidthChange
 }: SidebarProps) {
   const [mounted, setMounted] = useState(false);
   const [editingChatId, setEditingChatId] = useState<string | null>(null);
@@ -1076,23 +1074,6 @@ export default function Sidebar({
                   <Search size={16} />
                   <span>Search Chats</span>
                 </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    onOpenConnections?.();
-                    setIsOpen(false);
-                  }}
-                  className={cn(
-                    "w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl transition-all duration-205 active:scale-98 cursor-pointer text-[13px] font-bold border shadow-xs select-none",
-                    pathname === '/connections'
-                      ? (theme === 'light' ? "bg-neutral-900 text-white border-neutral-900" : "bg-white text-black border-white")
-                      : (theme === 'light' ? "bg-white hover:bg-neutral-100 border-neutral-200 text-neutral-800" : "bg-neutral-900 hover:bg-neutral-800 border-neutral-700 text-white")
-                  )}
-                >
-                  <Workflow size={16} />
-                  <span>Connections</span>
-                </button>
               </div>
             </div>
           ) : (
@@ -1139,23 +1120,6 @@ export default function Sidebar({
                 >
                   <Search size={13} />
                   <span>Search</span>
-                </button>
-              </div>
-
-              {/* 4. Connections */}
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={onOpenConnections}
-                  className={cn(
-                    "w-full flex items-center justify-start gap-1.5 px-2 py-0.5 rounded-md transition-all duration-205 active:scale-98 cursor-pointer text-[12px] font-medium border border-transparent hover:border-neutral-200 dark:hover:border-neutral-800 text-left",
-                    pathname === '/connections'
-                      ? (theme === 'light' ? "bg-neutral-100/80 text-neutral-900 border-neutral-200/50" : "bg-neutral-800/80 text-white border-neutral-700/50")
-                      : (theme === 'light' ? "text-neutral-700 hover:bg-neutral-50" : "text-neutral-300 hover:bg-neutral-800/50")
-                  )}
-                >
-                  <Workflow size={13} />
-                  <span>Connections</span>
                 </button>
               </div>
             </div>

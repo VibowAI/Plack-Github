@@ -46,8 +46,6 @@ interface AppContextType {
   isStreaming: boolean;
   setIsStreaming: React.Dispatch<React.SetStateAction<boolean>>;
   refreshChats: () => Promise<void>;
-  zoomEmail: string | null;
-  refreshConnections: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -69,9 +67,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [isMobile, setIsMobile] = useState(false);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
 
-  // Zoom specific state
-  const [zoomEmail, setZoomEmail] = useState<string | null>(null);
-
   // Persistent Chat State
   const [messages, setMessages] = useState<any[]>([]);
   const [inputValue, setInputValue] = useState('');
@@ -80,29 +75,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [isStreaming, setIsStreaming] = useState(false);
 
   const supabase = createClient();
-
-  const refreshConnections = useCallback(async () => {
-    if (!session?.user?.id) return;
-    try {
-      const res = await fetch('/api/connections/status');
-      const data = await res.json();
-      if (data.connections) {
-        const zoom = data.connections.find((c: any) => c.provider === 'zoom');
-        setZoomEmail(zoom?.email || null);
-      }
-    } catch (err) {
-      console.error('Failed to refresh connections:', err);
-    }
-  }, [session]);
-
-  useEffect(() => {
-    if (session?.user?.id) {
-      const timer = setTimeout(() => {
-        refreshConnections();
-      }, 0);
-      return () => clearTimeout(timer);
-    }
-  }, [session?.user?.id, refreshConnections]);
 
   // Auth initialization and Sync metadata
   useEffect(() => {
@@ -234,10 +206,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (session === null) return; // Wait until session loads
 
-    const isGuardedRoute = pathname.startsWith('/connections');
-    
     if (!session) {
-      if (isGuardedRoute) {
+      if (pathname === '/welcome') {
+        // Stay on welcome
+      } else {
         console.log('[AUTH ROUTER] Unauthenticated redirect to `/welcome`');
         router.replace('/welcome');
       }
@@ -433,9 +405,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setActiveStreams,
       isStreaming,
       setIsStreaming,
-      refreshChats,
-      zoomEmail,
-      refreshConnections
+      refreshChats
     }}>
       <style dangerouslySetInnerHTML={{ __html: `
         :root {

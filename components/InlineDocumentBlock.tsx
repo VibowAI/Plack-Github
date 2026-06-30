@@ -196,7 +196,7 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
       };
       fetchLatest();
     }
-  }, [docIdProp, isEditing]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [docIdProp, isEditing]);
 
   // --- Auto-Save Logic ---
 
