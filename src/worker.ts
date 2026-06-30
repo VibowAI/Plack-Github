@@ -30,6 +30,7 @@ export const app = new Hono<{ Bindings: Bindings }>();
 // Enable CORS and map Cloudflare bindings to process.env dynamically
 app.use('*', cors());
 app.use('*', async (c, next) => {
+  AIJobProcessor.init();
   globalThis.process = globalThis.process || {};
   globalThis.process.env = globalThis.process.env || {};
   
@@ -2038,7 +2039,6 @@ Respond with a JSON object: { "requiresSearch": boolean }`;
 }
 
 // Start background processor
-AIJobProcessor.init();
 
 // Main Chat queue endpoint
 app.post('/api/chat', async (c) => {
