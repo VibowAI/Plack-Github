@@ -1,13 +1,22 @@
 'use client';
 
+import React from 'react';
 import { motion } from 'framer-motion';
-import { useRouter } from 'next/navigation';
+import { useNavigate } from 'react-router-dom';
 import Image from 'next/image';
 import { ArrowRight, MessageSquare, Search, FileText, Brain, Sparkles, Check } from 'lucide-react';
 import brandingLogo from '@/src/assets/images/branding_logo_1780697091587.png';
 
 export default function WelcomePage() {
-  const router = useRouter();
+  const navigate = useNavigate();
+  const router = React.useMemo(() => ({
+    push: (url: string) => navigate(url),
+    replace: (url: string) => navigate(url, { replace: true }),
+    back: () => navigate(-1),
+    forward: () => navigate(1),
+    prefetch: () => {},
+    refresh: () => window.location.reload()
+  }), [navigate]);
 
   const handleStart = () => {
     router.push('/');

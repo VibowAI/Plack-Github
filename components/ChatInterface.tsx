@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import { useRouter, useParams, usePathname } from 'next/navigation';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { 
   Send, 
   Plus, 
@@ -223,11 +223,22 @@ function extractChatId(paramId: string | undefined): string | null {
   return paramId;
 }
 
-export default function Home() {
-  const router = useRouter();
+export default function ChatInterface() {
+  const navigate = useNavigate();
   const params = useParams();
+  const location = useLocation();
+  const pathname = location.pathname;
+
+  const router = React.useMemo(() => ({
+    push: (url: string) => navigate(url),
+    replace: (url: string) => navigate(url, { replace: true }),
+    back: () => navigate(-1),
+    forward: () => navigate(1),
+    prefetch: () => {},
+    refresh: () => window.location.reload()
+  }), [navigate]);
+
   const routeChatId = params?.id as string | undefined;
-  const pathname = usePathname();
 
   const {
     session,

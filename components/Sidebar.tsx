@@ -5,8 +5,7 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence, useSpring, useTransform, useMotionValue } from 'framer-motion';
 import { createClient } from '@/lib/supabase/client';
 import { useAppContext } from '@/context/AppContext';
-import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { useLocation, Link } from 'react-router-dom';
 import { 
   Sparkles, 
   MoreHorizontal, 
@@ -298,7 +297,8 @@ export default function Sidebar({
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
 
-  const pathname = usePathname();
+  const location = useLocation();
+  const pathname = location.pathname;
   
   // Infinite Scroll States
   const [visibleCount, setVisibleCount] = useState(15);
@@ -1042,7 +1042,7 @@ export default function Sidebar({
               {/* Navigation Items Mobile */}
               <div className="space-y-2">
                 <Link
-                  href="/"
+                  to="/"
                   onClick={() => {
                     onNewChat();
                     setIsOpen(false);
@@ -1092,7 +1092,7 @@ export default function Sidebar({
 
               {/* 1. New Chat (Route: /) */}
               <Link
-                href="/"
+                to="/"
                 onClick={onNewChat}
                 className={cn(
                   "w-full flex items-center justify-start gap-1.5 px-2 py-1 rounded-md transition-all duration-205 active:scale-98 cursor-pointer text-[12px] font-medium border border-transparent hover:border-neutral-200 dark:hover:border-neutral-800",
@@ -1484,7 +1484,7 @@ export default function Sidebar({
                       <span className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider">Company</span>
                     </div>
                     <Link
-                      href="/privacypolicy"
+                      to="/privacypolicy"
                       onClick={() => setProfileMenuOpen(false)}
                       className={cn(
                         "flex items-center gap-2.5 w-full text-left px-3 py-2 rounded-xl transition-all cursor-pointer group text-[13px] font-medium",
@@ -1495,7 +1495,7 @@ export default function Sidebar({
                       <span>Privacy Policy</span>
                     </Link>
                     <Link
-                      href="/termsofservice"
+                      to="/termsofservice"
                       onClick={() => setProfileMenuOpen(false)}
                       className={cn(
                         "flex items-center gap-2.5 w-full text-left px-3 py-2 rounded-xl transition-all cursor-pointer group text-[13px] font-medium",

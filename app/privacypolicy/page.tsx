@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { Shield, X, ArrowLeft } from 'lucide-react';
-import Link from 'next/link';
+import { Link } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { useAppContext } from '@/context/AppContext';
 
@@ -25,7 +25,7 @@ export default function PrivacyPolicyPage() {
       )}>
         <div className="flex items-center gap-4">
           <Link 
-            href="/"
+            to="/"
             className={cn(
               "p-2 rounded-full transition-all active:scale-95 flex items-center justify-center",
               theme === 'light' ? "hover:bg-neutral-100 text-neutral-500" : "hover:bg-white/10 text-neutral-400"
@@ -93,7 +93,7 @@ export default function PrivacyPolicyPage() {
 
           <div className="pt-20 text-center">
             <Link 
-              href="/"
+              to="/"
               className={cn(
                 "inline-flex items-center justify-center px-10 py-3 rounded-2xl font-bold text-sm transition-all active:scale-95 shadow-lg",
                 theme === 'light' ? "bg-neutral-900 text-white hover:bg-neutral-800 shadow-neutral-200" : "bg-white text-black hover:bg-neutral-200 shadow-black/20"

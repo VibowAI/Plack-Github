@@ -3,7 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { getChats, createChat as createChatApi, updateChatTitle as updateChatTitleApi, deleteChat as deleteChatApi } from '@/lib/supabase/services';
-import { useRouter, usePathname } from 'next/navigation';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { logger, LogCategory } from '@/lib/logger';
 
 type ThemeMode = 'light' | 'dark' | 'cosmic';
@@ -61,8 +61,18 @@ export function useAppContext() {
 }
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const router = useRouter();
-  const pathname = usePathname();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const pathname = location.pathname;
+
+  const router = React.useMemo(() => ({
+    push: (url: string) => navigate(url),
+    replace: (url: string) => navigate(url, { replace: true }),
+    back: () => navigate(-1),
+    forward: () => navigate(1),
+    prefetch: () => {},
+    refresh: () => window.location.reload()
+  }), [navigate]);
   
   const [session, setSession] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);

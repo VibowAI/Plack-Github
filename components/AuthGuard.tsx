@@ -3,11 +3,12 @@
 import React from 'react';
 import { useAppContext } from '@/context/AppContext';
 import Auth from '@/components/Auth';
-import { usePathname } from 'next/navigation';
+import { useLocation } from 'react-router-dom';
 
 export default function AuthGuard({ children }: { children: React.ReactNode }) {
   const { session, isLoading } = useAppContext();
-  const pathname = usePathname();
+  const location = useLocation();
+  const pathname = location.pathname;
 
   // If we're loading session state, show nothing or a loader
   if (isLoading) {
