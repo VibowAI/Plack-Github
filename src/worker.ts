@@ -30,7 +30,6 @@ export const app = new Hono<{ Bindings: Bindings }>();
 // Enable CORS and map Cloudflare bindings to process.env dynamically
 app.use('*', cors());
 app.use('*', async (c, next) => {
-  AIJobProcessor.init();
   globalThis.process = globalThis.process || {};
   globalThis.process.env = globalThis.process.env || {};
   
@@ -2052,6 +2051,7 @@ app.post('/api/chat', async (c) => {
       return c.json({ error: "Messages array is required" }, 400);
     }
 
+    AIJobProcessor.init();
     AIJobProcessor.captureEnv(c.env);
 
     // Get the original prompt text from the last user message
@@ -2135,6 +2135,7 @@ app.get('/api/chat/stream', async (c) => {
     return c.json({ error: "jobId is required" }, 400);
   }
 
+  AIJobProcessor.init();
   AIJobProcessor.captureEnv(c.env);
   const supabase = createAdminClient();
   let job: Job | null = null;
