@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { getChats, createChat as createChatApi, updateChatTitle as updateChatTitleApi, deleteChat as deleteChatApi } from '@/lib/supabase/services';
 import { useRouter, usePathname } from 'next/navigation';
@@ -46,7 +46,6 @@ interface AppContextType {
   isStreaming: boolean;
   setIsStreaming: React.Dispatch<React.SetStateAction<boolean>>;
   refreshChats: () => Promise<void>;
-  supabase: any;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -75,7 +74,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [activeStreams, setActiveStreams] = useState<Record<string, any>>({});
   const [isStreaming, setIsStreaming] = useState(false);
 
-  const supabase = useMemo(() => createClient(), []);
+  const supabase = createClient();
 
   // Auth initialization and Sync metadata
   useEffect(() => {
@@ -152,7 +151,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       clearTimeout(timer);
       subscription.unsubscribe();
     };
-  }, [supabase]);
+  }, [supabase.auth]);
 
   const setAccentColor = async (color: AccentColor, customValue?: string) => {
     setAccentColorState(color);
@@ -406,8 +405,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setActiveStreams,
       isStreaming,
       setIsStreaming,
-      refreshChats,
-      supabase
+      refreshChats
     }}>
       <style dangerouslySetInnerHTML={{ __html: `
         :root {
