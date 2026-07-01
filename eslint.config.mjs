@@ -6,6 +6,17 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-export default defineConfig([{
-    extends: [...next],
-}]);
+export default defineConfig([
+    {
+        ignores: [
+            "dist/**/*",
+            "node_modules/**/*",
+            "find_bn.js",
+            "check_rr.js",
+            "check_rd.js",
+        ],
+    },
+    {
+        extends: [...next],
+    },
+]);
