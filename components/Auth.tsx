@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence, useSpring, useTransform, useMotionValue } from 'motion/react';
+import { motion, AnimatePresence, useSpring, useTransform, useMotionValue } from 'framer-motion';
 import { createClient } from '@/lib/supabase/client';
 import { Loader2, Sparkles, Mail, Lock, User, CheckCircle2, HelpCircle, Info, X, Activity, Layers } from 'lucide-react';
 import { cn } from '@/lib/utils';

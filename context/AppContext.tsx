@@ -46,6 +46,7 @@ interface AppContextType {
   isStreaming: boolean;
   setIsStreaming: React.Dispatch<React.SetStateAction<boolean>>;
   refreshChats: () => Promise<void>;
+  isLoading: boolean;
   supabase: any;
 }
 
@@ -64,6 +65,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   
   const [session, setSession] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const [chats, setChats] = useState<any[]>([]);
   const [themeSetting, setThemeSettingState] = useState<ThemeSetting>('system');
   const [theme, setTheme] = useState<ThemeMode>('light');
@@ -120,6 +122,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
+      setIsLoading(false);
       updateAuthCookie(session);
       if (session?.user?.user_metadata) {
         const meta = session.user.user_metadata;
@@ -415,6 +418,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       isStreaming,
       setIsStreaming,
       refreshChats,
+      isLoading,
       supabase
     }}>
       <style dangerouslySetInnerHTML={{ __html: `

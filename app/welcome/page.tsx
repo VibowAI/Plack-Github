@@ -1,6 +1,6 @@
 'use client';
 
-import { motion } from 'motion/react';
+import { motion } from 'framer-motion';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { ArrowRight, MessageSquare, Search, FileText, Brain, Sparkles, Check } from 'lucide-react';
