@@ -1,5 +1,8 @@
+'use client';
+
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { createPortal } from 'react-dom';
 import { 
   FileText, Copy, Edit3, Check, Sparkles, Send, X, RotateCcw, RotateCw,
   CheckCircle2, Trash2, StopCircle, 
@@ -77,15 +80,30 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
 
-  // Device detection
+  const [mounted, setMounted] = useState(false);
+
+  // Device detection & Mount diagnostics
   useEffect(() => {
+    const timer = setTimeout(() => {
+      setMounted(true);
+    }, 0);
+    console.log("[EDITOR COMPONENT MOUNT]", { 
+      docIdProp, 
+      title, 
+      hasInitialContent: !!initialContent, 
+      contentLength: initialContent?.length || 0 
+    });
+
     const checkMobile = () => {
       setIsMobile(window.innerWidth < 768);
     };
     checkMobile();
     window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
-  }, []);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('resize', checkMobile);
+    };
+  }, [docIdProp, initialContent, title]);
 
   const handleDocumentTap = () => {
     if (isMobile && !isFullscreen) {
@@ -104,6 +122,20 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
 
   // Derive actual doc ID
   const actualDocId = docIdProp || internalDocId;
+
+  // Editor specific session logs
+  useEffect(() => {
+    if (isEditing) {
+      console.log("[EDITOR OPEN]", { docIdProp, actualDocId, title: editedTitle });
+      console.log("[EDITOR DOCUMENT LOADED]", { docIdProp, actualDocId });
+      console.log("[EDITOR CONTENT LENGTH]", activeDocument?.length || 0);
+      console.log("[EDITOR READY]", { docIdProp, actualDocId });
+      
+      if (!activeDocument && activeDocument !== "") {
+        console.error("[EDITOR RENDER FAILED] activeDocument is missing or undefined", { docIdProp, actualDocId });
+      }
+    }
+  }, [isEditing, actualDocId, activeDocument, docIdProp, editedTitle]);
 
   const [prevInitialContent, setPrevInitialContent] = useState(initialContent);
 
@@ -416,8 +448,7 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
 
       {/* EDITOR SIDEBAR / FULLSCREEN (Conditionally rendered via Portal) */}
       <AnimatePresence>
-        {isEditing && typeof document !== 'undefined' && (
-          require('react-dom').createPortal(
+        {isEditing && mounted && typeof document !== 'undefined' && createPortal(
           <>
             {/* Backdrop for Editor (Mobile Only) */}
             {isMobile && (
@@ -539,28 +570,35 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
                 className="flex-1 overflow-y-auto px-6 sm:px-12 py-8 sm:py-12 scroll-smooth select-text relative"
               >
                 <div className="max-w-[800px] mx-auto">
-                  <div className="space-y-6 sm:space-y-8 pb-32">
-                    <input 
-                      type="text" 
-                      value={editedTitle} 
-                      onChange={(e) => setEditedTitle(e.target.value)} 
-                      className={cn("w-full text-3xl sm:text-5xl font-black tracking-tighter px-0 bg-transparent border-none outline-none focus:ring-0 placeholder:opacity-20", theme === 'light' ? "text-neutral-900" : "text-white")} 
-                      placeholder="Document Title" 
-                      disabled={isRevisionStreaming}
-                    />
-                    <textarea
-                      ref={editorRef as any}
-                      value={isRevisionStreaming && draftDocument ? draftDocument : activeDocument}
-                      onChange={(e) => setActiveDocument(e.target.value)}
-                      placeholder="Start typing your elegant document body..."
-                      disabled={isRevisionStreaming}
-                      className={cn(
-                        "w-full min-h-[500px] sm:min-h-[700px] font-mono text-[15px] sm:text-[17px] leading-[1.6] sm:leading-[1.8] px-0 py-2 sm:py-4 bg-transparent border-none outline-none focus:ring-0 whitespace-pre-wrap transition-opacity duration-300 resize-none focus:ring-transparent focus:border-transparent focus:ring-offset-0 select-text cursor-text", 
-                        theme === 'light' ? "text-neutral-700 placeholder-neutral-400" : "text-neutral-300 placeholder-neutral-600",
-                        isRevisionStreaming && "opacity-50 cursor-not-allowed"
-                      )} 
-                    />
-                  </div>
+                  {!activeDocument && activeDocument !== "" ? (
+                    <div className="flex flex-col items-center justify-center py-20 gap-3">
+                      <Sparkles className="animate-spin text-indigo-500" size={32} />
+                      <span className="text-sm opacity-50">Loading document content...</span>
+                    </div>
+                  ) : (
+                    <div className="space-y-6 sm:space-y-8 pb-32">
+                      <input 
+                        type="text" 
+                        value={editedTitle} 
+                        onChange={(e) => setEditedTitle(e.target.value)} 
+                        className={cn("w-full text-3xl sm:text-5xl font-black tracking-tighter px-0 bg-transparent border-none outline-none focus:ring-0 placeholder:opacity-20", theme === 'light' ? "text-neutral-900" : "text-white")} 
+                        placeholder="Document Title" 
+                        disabled={isRevisionStreaming}
+                      />
+                      <textarea
+                        ref={editorRef as any}
+                        value={isRevisionStreaming && draftDocument ? draftDocument : activeDocument}
+                        onChange={(e) => setActiveDocument(e.target.value)}
+                        placeholder="Start typing your elegant document body..."
+                        disabled={isRevisionStreaming}
+                        className={cn(
+                          "w-full min-h-[500px] sm:min-h-[700px] font-mono text-[15px] sm:text-[17px] leading-[1.6] sm:leading-[1.8] px-0 py-2 sm:py-4 bg-transparent border-none outline-none focus:ring-0 whitespace-pre-wrap transition-opacity duration-300 resize-none focus:ring-transparent focus:border-transparent focus:ring-offset-0 select-text cursor-text", 
+                          theme === 'light' ? "text-neutral-700 placeholder-neutral-400" : "text-neutral-300 placeholder-neutral-600",
+                          isRevisionStreaming && "opacity-50 cursor-not-allowed"
+                        )} 
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -642,8 +680,7 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
                 </div>
               </div>
             </motion.div>
-          </>, document.body)
-        )}
+          </>, document.body)}
       </AnimatePresence>
     </>
   );

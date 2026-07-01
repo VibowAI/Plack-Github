@@ -1830,6 +1830,8 @@ export default function ChatInterface() {
     setIsStreaming(false);
     setIsSourcesSidebarOpen(false);
     setActiveSources([]);
+    setMessageVersions({});
+    setActiveMessageVersion({});
     window.history.pushState(null, '', '/');
   };
 
@@ -1842,6 +1844,8 @@ export default function ChatInterface() {
     setExpandedReasonings({});
     setAttachments([]);
     setIsStreaming(false);
+    setMessageVersions({});
+    setActiveMessageVersion({});
     window.history.pushState(null, '', '/');
   };
 
@@ -1962,16 +1966,24 @@ export default function ChatInterface() {
   };
 
   const handleRegenerate = async (msgId: string) => {
-    if (!activeChatId) return;
+    console.log("[REGENERATE START]", { msgId });
+    if (!activeChatId) {
+      console.error("[REGENERATE ERROR] No active chat ID");
+      return;
+    }
 
     // Prevent starting regenerate if lock is already active
     if (activeRequestsRef.current[activeChatId]) {
       logger.logWarn(LogCategory.CHAT, "Ignored regenerate request while chat is already active");
+      console.error("[REGENERATE ERROR] Chat is already active with another request");
       return;
     }
 
     const targetIndex = messages.findIndex(m => m.id === msgId);
-    if (targetIndex === -1) return;
+    if (targetIndex === -1) {
+      console.error("[REGENERATE ERROR] Target message not found in state:", msgId);
+      return;
+    }
 
     // Find the closest user prompt preceding the assistant message
     let promptText = "";
@@ -1986,8 +1998,11 @@ export default function ChatInterface() {
 
     if (!promptText && promptAttachments.length === 0) {
       logger.logWarn(LogCategory.CHAT, "Preceding user prompt not found for regeneration");
+      console.error("[REGENERATE ERROR] Preceding user prompt not found for message ID:", msgId);
       return;
     }
+
+    console.log("[ORIGINAL PROMPT FOUND]", promptText);
 
     const currentMsg = messages[targetIndex];
     
@@ -2004,11 +2019,17 @@ export default function ChatInterface() {
       }
     } catch (err) {
       logger.logError(LogCategory.DATABASE, "Failed to save initial message version", err);
+      console.error("[REGENERATE ERROR] Failed to save initial V1 message version", err);
     }
 
     // Prepare UI for new version streaming
     const nextVersionNum = (messageVersions[msgId]?.length || 1) + 1;
-    setActiveMessageVersion(prev => ({ ...prev, [msgId]: nextVersionNum }));
+    console.log("[NEW VERSION CREATED]", { versionNum: nextVersionNum, msgId });
+    setActiveMessageVersion(prev => {
+      const nextActive = { ...prev, [msgId]: nextVersionNum };
+      console.log("[ACTIVE VERSION UPDATED]", nextActive);
+      return nextActive;
+    });
     
     // Instead of deleting, we will reuse the message ID and stream the new content into it
     // We update the messages array so that the target message is now empty and streaming
@@ -2024,11 +2045,6 @@ export default function ChatInterface() {
     };
     
     // Truncate messages after targetIndex for context purposes, but we don't delete them from DB yet
-    // Wait, the prompt says "Do NOT overwrite previous versions". We don't delete from DB, 
-    // but what about subsequent messages in the chat if there are any? 
-    // Usually, branching a chat implies we hide or delete subsequent messages.
-    // For simplicity, let's keep the existing UI behavior of deleting subsequent messages, 
-    // but the target message itself is just updated with the new version.
     try {
       const dbMessages = await getMessages(activeChatId);
       if (dbMessages && dbMessages.length > targetIndex + 1) {
@@ -2040,6 +2056,7 @@ export default function ChatInterface() {
       }
     } catch (err) {
       logger.logError(LogCategory.DATABASE, "Failed to sync regenerate deletions", err);
+      console.error("[REGENERATE ERROR] Failed to delete subsequent messages from DB", err);
     }
 
     // Trigger API request directly via handleSubmit
@@ -3145,13 +3162,17 @@ export default function ChatInterface() {
               */
               
               // 2. Save new version
+              console.log("[VERSION SAVED]", { regenerateMsgId, versionNum });
               await saveMessageVersion(regenerateMsgId, finalSavedText, versionNum).then(() => {
+                console.log("[ACTIVE VERSION UPDATED]", { msgId: regenerateMsgId, activeVersion: versionNum });
                 setMessageVersions(prev => {
                   const existing = prev[regenerateMsgId] || [];
                   return { ...prev, [regenerateMsgId]: [...existing, { version: versionNum, content: finalSavedText }] };
                 });
+                console.log("[REGENERATE COMPLETE]", { regenerateMsgId, versionNum });
               }).catch(err => {
                 logger.logError(LogCategory.DATABASE, "Failed to save message version", err);
+                console.error("[REGENERATE ERROR] Failed to save message version:", err);
               });
             } else {
               // Bypassed: server-side background worker handles creating this automatically
@@ -4422,12 +4443,24 @@ export default function ChatInterface() {
                             key={modelOption.id}
                             type="button"
                             onClick={() => {
+                              const oldModel = activeModel;
                               const targetModel = modelOption.id as ModelName;
-                              console.log(`[MODEL CHANGE] ${activeModel} -> ${targetModel}`);
-                              setActiveModel(targetModel);
-                              setIsModelDropdownOpen(false);
-                              if (targetModel !== 'ED1.7') {
-                                setUseDeepResearch(false);
+                              console.log("[MODEL CHANGE]");
+                              console.log("[OLD MODEL]", oldModel);
+                              console.log("[NEW MODEL]", targetModel);
+                              try {
+                                if (isStreaming) {
+                                  console.log("[MODEL SWITCH] Safely cancelling current stream before model change...");
+                                  handleStopStreaming(activeChatId || 'temporary');
+                                }
+                                setActiveModel(targetModel);
+                                setIsModelDropdownOpen(false);
+                                if (targetModel !== 'ED1.7') {
+                                  setUseDeepResearch(false);
+                                }
+                                console.log("[MODEL READY]", targetModel);
+                              } catch (err) {
+                                console.error("[MODEL SWITCH FAILED]", err);
                               }
                             }}
                             className={cn(
@@ -4879,6 +4912,7 @@ export default function ChatInterface() {
                           ) : (
                             (() => {
                               const parsedDoc = extractDocumentBlock(contentToRender);
+                              const resolvedDocId = parsedDoc.id || `doc-${message.id}`;
                               
                               return (
                                 <div className="flex flex-col gap-4">
@@ -4888,18 +4922,18 @@ export default function ChatInterface() {
                                   
                                   {parsedDoc.hasDocument && (
                                     <InlineDocumentBlock 
-                                      id={parsedDoc.id}
+                                      id={resolvedDocId}
                                       userId={session?.user?.id}
                                       title={parsedDoc.title} 
                                       content={parsedDoc.content} 
                                       theme={theme} 
                                       isStreaming={message.isStreaming && isLatestVersion}
-                                      isActiveEditor={activeDocumentEditorId === parsedDoc.id}
+                                      isActiveEditor={activeDocumentEditorId === resolvedDocId}
                                       width={sourcesWidth}
                                       onEditorOpen={(isOpen) => {
                                         if (isOpen) {
-                                          setActiveDocumentEditorId(parsedDoc.id);
-                                        } else if (activeDocumentEditorId === parsedDoc.id) {
+                                          setActiveDocumentEditorId(resolvedDocId);
+                                        } else if (activeDocumentEditorId === resolvedDocId) {
                                           setActiveDocumentEditorId(null);
                                         }
                                       }}
