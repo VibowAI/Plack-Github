@@ -224,6 +224,18 @@ function extractChatId(paramId: string | undefined): string | null {
 }
 
 export default function ChatInterface() {
+  /**
+   * INITIALIZATION ORDER RULES:
+   * 1. Constants
+   * 2. Refs (useRef)
+   * 3. State (useState)
+   * 4. Derived values (useMemo)
+   * 5. Helper functions (declared with `function` keyword to hoist)
+   * 6. Core callbacks & Effects (useCallback, useEffect)
+   * 7. JSX
+   * 
+   * WARNING: Never reference a `const` function before initialization to avoid Temporal Dead Zone (TDZ).
+   */
   const navigate = useNavigate();
   const params = useParams();
   const location = useLocation();
@@ -382,6 +394,16 @@ export default function ChatInterface() {
   const [limitCard, setLimitCard] = useState<{ actionType: string; resetIn: string } | null>(null);
   const [isSourcesSidebarOpen, setIsSourcesSidebarOpen] = useState(false);
   const [activeDocumentEditorId, setActiveDocumentEditorId] = useState<string | null>(null);
+  const [isLiveModeOpen, setIsLiveModeOpen] = useState(false);
+
+  // Core Refs
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+  const isNearBottomRef = useRef<boolean>(true);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const photosInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const filesInputRef = useRef<HTMLInputElement>(null);
 
   // Manage exclusive right sidebars
   useEffect(() => {
@@ -426,7 +448,6 @@ export default function ChatInterface() {
 
   const [isLogoutConfirmOpen, setIsLogoutConfirmOpen] = useState(false);
   const [isFullscreenInputOpen, setIsFullscreenInputOpen] = useState(false);
-  const [isLiveModeOpen, setIsLiveModeOpen] = useState(false);
   const [liveTranscript, setLiveTranscript] = useState<{ userText: string; aiText: string }>({ userText: '', aiText: '' });
   const [inputLineCount, setInputLineCount] = useState(1);
   const [memoryUsage, setMemoryUsage] = useState({ used_bytes: 0, count: 0, used_slots: 0, max_slots: 99 });
@@ -1310,7 +1331,7 @@ export default function ChatInterface() {
     }
   };
 
-  const selectChat = async (idOrSlug: string) => {
+  async function selectChat(idOrSlug: string) {
     const id = extractChatId(idOrSlug);
     if (!id) return;
 
@@ -1525,13 +1546,7 @@ export default function ChatInterface() {
   const dropdownRef = useRef<HTMLDivElement>(null);
   const attachmentMenuRef = useRef<HTMLDivElement>(null);
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const chatContainerRef = useRef<HTMLDivElement>(null);
-  const isNearBottomRef = useRef<boolean>(true);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const photosInputRef = useRef<HTMLInputElement>(null);
-  const cameraInputRef = useRef<HTMLInputElement>(null);
-  const filesInputRef = useRef<HTMLInputElement>(null);
+
 
   // Close dropdown on click outside or Escape key
   useEffect(() => {
@@ -1771,7 +1786,7 @@ export default function ChatInterface() {
     setAttachments(prev => prev.filter((_, i) => i !== index));
   };
 
-  const clearChat = () => {
+  function clearChat() {
     // We DO NOT abort background generations here!
     setActiveChatId(null);
     setIsTemporaryChat(false);
@@ -2267,7 +2282,7 @@ export default function ChatInterface() {
   };
 
   // Send message with multi-stream tracking and settings incorporation
-  const handleSubmit = async (e?: React.FormEvent, customPrompt?: string, regenerateMsgId?: string, nextVersionNum?: number, regenerateAttachments?: Attachment[]) => {
+  async function handleSubmit(e?: React.FormEvent, customPrompt?: string, regenerateMsgId?: string, nextVersionNum?: number, regenerateAttachments?: Attachment[]) {
     if (e) e.preventDefault();
     const promptToSend = (customPrompt || inputValue).trim();
     if (!promptToSend && attachments.length === 0 && !regenerateMsgId && (!regenerateAttachments || regenerateAttachments.length === 0)) return;

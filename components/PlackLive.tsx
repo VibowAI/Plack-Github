@@ -511,7 +511,7 @@ export default function PlackLive({
     }
   };
 
-  const handleAutoReconnect = () => {
+  function handleAutoReconnect() {
     if (!isOpenRef.current) return;
     if (reconnectAttemptsRef.current >= 5) {
       console.log("[LIVE ERROR] Max reconnect attempts reached");
@@ -539,14 +539,14 @@ export default function PlackLive({
   };
 
   // Helper stopping media stream tracks
-  const stopMediaTracks = (stream: MediaStream | null) => {
+  function stopMediaTracks(stream: MediaStream | null) {
     if (stream) {
       stream.getTracks().forEach(track => track.stop());
     }
   };
 
   // Clear session objects and release device hooks
-  const cleanUpSession = () => {
+  function cleanUpSession() {
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
     }

@@ -154,6 +154,13 @@ Respond with exactly a JSON object, containing nothing else, in this exact forma
     let isClientConnected = true;
     let fullResponseText = "";
 
+    let savedMemoryPayload: any = null;
+    let memoryReviewNeeded: any = null;
+    let memoryUpdateNeeded: any = null;
+    let memoryDeleteNeeded: any = null;
+    let isMemoryLimitReached = false;
+    let isMemorySaveFailed = false;
+
     // DEEP RESEARCH MODE WORKFLOW
     if (isDeepResearch) {
       const customReadableStream = new ReadableStream({
@@ -617,13 +624,6 @@ Respond with a JSON object: { "requiresSearch": boolean }`;
       ['MEMORY_ADD', 'MEMORY_UPDATE', 'MEMORY_DELETE'].includes(classification.intent) && 
       classification.confidence >= 0.90
     );
-
-    let savedMemoryPayload: any = null;
-    let memoryReviewNeeded: any = null;
-    let memoryUpdateNeeded: any = null;
-    let memoryDeleteNeeded: any = null;
-    let isMemoryLimitReached = false;
-    let isMemorySaveFailed = false;
 
     if (isMemoryIntent && userId && classification) {
       try {
