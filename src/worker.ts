@@ -1149,10 +1149,13 @@ class AIJobProcessor {
     }
   }
 
-  public static trigger() {
-    this.processNextJob().catch(err => {
+  public static trigger(ctx?: any) {
+    const promise = this.processNextJob().catch(err => {
       console.error("[JOB PROCESSOR] Trigger error:", err);
     });
+    if (ctx && ctx.waitUntil) {
+      ctx.waitUntil(promise);
+    }
   }
 
   private static async processNextJob() {
@@ -1202,6 +1205,11 @@ class AIJobProcessor {
       console.error("[JOB PROCESSOR] Error in processNextJob:", err);
     } finally {
       this.isProcessing = false;
+      // Loop if more jobs are queued
+      const hasMoreInMemory = Array.from(inMemoryJobs.values()).some(j => j.status === 'queued');
+      if (hasMoreInMemory) {
+        setTimeout(() => this.trigger(), 100);
+      }
     }
   }
 
@@ -1252,6 +1260,7 @@ class AIJobProcessor {
 
       // --- GENERATE MEMORIES / ADAPTIVE PROFILE / PARSING ---
       // 1. Retrieve Memories
+      jobEventEmitter.emit(`update:${job.id}`, { status: 'running', researchStatus: 'Retrieving memory...' });
       let memoryContext = "";
       let memoriesUsedCount = 0;
       let memoriesUsedList: any[] = [];
@@ -1285,6 +1294,7 @@ class AIJobProcessor {
       }
 
       // Extract Adaptive User Profile Summary
+      jobEventEmitter.emit(`update:${job.id}`, { status: 'running', researchStatus: 'Planning...' });
       let profileSummary: any = null;
       if (messages && messages.length > 1) {
         try {
@@ -1703,6 +1713,7 @@ Respond with a JSON object: { "requiresSearch": boolean }`;
             }
 
             if (query) {
+              jobEventEmitter.emit(`update:${job.id}`, { status: 'running', researchStatus: 'Searching Web...' });
               try {
                 const tavilyRes = await fetch("https://api.tavily.com/search", {
                   method: "POST",
@@ -1922,6 +1933,8 @@ Respond with a JSON object: { "requiresSearch": boolean }`;
         if (isMemorySaveFailed) {
           await sendChunk({ memorySaveFailed: true });
         }
+        
+        jobEventEmitter.emit(`update:${job.id}`, { status: 'running', researchStatus: 'Generating response...' });
 
         const stream = await ai.models.generateContentStream({
           model: model,
@@ -2118,7 +2131,7 @@ app.post('/api/chat', async (c) => {
     }
 
     // Trigger processing asynchronously
-    AIJobProcessor.trigger();
+    AIJobProcessor.trigger(c.executionCtx);
 
     return c.json({ jobId, status: 'queued', messageId: cleanMessageId });
 

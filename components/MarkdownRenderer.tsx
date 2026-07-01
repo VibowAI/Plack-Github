@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { Copy, Check } from 'lucide-react';
+import { copyToClipboard as globalCopyToClipboard } from '@/lib/utils';
 
 interface MarkdownRendererProps {
   content: string;
@@ -157,39 +158,11 @@ export default function MarkdownRenderer({ content, theme = 'light' }: MarkdownR
 function CodeBlock({ language, code, theme = 'light' }: { language: string; code: string; theme?: 'light' | 'dark' | 'cosmic' }) {
   const [copied, setCopied] = useState(false);
 
-  const copyToClipboard = () => {
-    const fallbackCopy = (text: string) => {
-      try {
-        const textArea = document.createElement("textarea");
-        textArea.value = text;
-        textArea.style.position = "fixed";
-        textArea.style.opacity = "0";
-        document.body.appendChild(textArea);
-        textArea.focus();
-        textArea.select();
-        const successful = document.execCommand('copy');
-        document.body.removeChild(textArea);
-        if (successful) {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 2000);
-        }
-      } catch (err) {
-        console.error("Fallback copy failed", err);
-      }
-    };
-
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(code)
-        .then(() => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 2000);
-        })
-        .catch((err) => {
-          console.error("Clipboard API failed, trying fallback", err);
-          fallbackCopy(code);
-        });
-    } else {
-      fallbackCopy(code);
+  const copyToClipboard = async () => {
+    const success = await globalCopyToClipboard(code);
+    if (success) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     }
   };
 

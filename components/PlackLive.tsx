@@ -297,10 +297,18 @@ export default function PlackLive({
       setVoiceState('Thinking');
 
       const keyRes = await fetch('/api/live-key');
+      if (!isOpenRef.current) {
+        stopMediaTracks(stream);
+        return;
+      }
       if (!keyRes.ok) {
         throw new Error("Unable to fetch Live API Key");
       }
       const { apiKey } = await keyRes.json();
+      if (!isOpenRef.current) {
+        stopMediaTracks(stream);
+        return;
+      }
       if (!apiKey) {
         throw new Error("No Live API key configured on server");
       }
@@ -320,13 +328,12 @@ export default function PlackLive({
 
       // Connect to Gemini Live Session
       const session = await ai.live.connect({
-        model: "models/gemini-3.1-flash-live-preview",
+        model: "gemini-3.1-flash-live-preview",
         config: {
           responseModalities: [Modality.AUDIO],
           systemInstruction: {
             parts: [{ text: "You are Plack AI's Voice Assistant. Speak naturally, concisely, and fluidly. Use a conversational tone appropriate for voice interactions." + historyContext }]
           },
-          tools: [{ googleSearch: {} }],
           outputAudioTranscription: {},
           inputAudioTranscription: {},
           generationConfig: {
@@ -357,7 +364,6 @@ export default function PlackLive({
                 setVoiceState('Transcribing');
                 console.log("[LIVE TRANSCRIPT RECEIVED]", uText);
                 console.log("[NEW TURN STARTED]");
-                saveLiveUserMessageRef.current?.(uText);
                 onLiveTranscriptUpdate?.({ userText: uText, aiText: "" });
               }
             }
@@ -392,9 +398,10 @@ export default function PlackLive({
               stopAllPlayback();
               console.log("[PLAYBACK STOPPED]");
               
+              const uText = currentUserTextRef.current.trim();
               const aText = currentAiTextRef.current.trim();
-              if (aText) {
-                saveLiveAssistantMessageRef.current?.(aText);
+              if (uText || aText) {
+                saveLiveMessagesRef.current?.(uText, aText);
               }
               
               currentUserTextRef.current = "";
@@ -408,9 +415,10 @@ export default function PlackLive({
             // Save completed conversational turn in the chat system once complete
             if (message.serverContent?.turnComplete) {
               console.log("[LIVE RESPONSE COMPLETE]");
+              const uText = currentUserTextRef.current.trim();
               const aText = currentAiTextRef.current.trim();
-              if (aText) {
-                saveLiveAssistantMessageRef.current?.(aText);
+              if (uText || aText) {
+                saveLiveMessagesRef.current?.(uText, aText);
               }
               
               currentUserTextRef.current = "";
@@ -434,6 +442,15 @@ export default function PlackLive({
           }
         }
       });
+
+      if (!isOpenRef.current) {
+        console.log("[LIVE] Connected but panel was closed. Closing session.");
+        try {
+          session.close();
+        } catch (e) {}
+        stopMediaTracks(stream);
+        return;
+      }
 
       sessionRef.current = session;
       console.log("[LIVE CONNECTED]");
@@ -1003,62 +1020,7 @@ export default function PlackLive({
           )}
         </AnimatePresence>
 
-        {/* Action Row containing interactive feedback buttons */}
-        <div className="relative z-20 flex items-center justify-center gap-6 my-4 select-none pointer-events-auto shrink-0">
-          <button 
-            onClick={() => setIsLiked(!isLiked)}
-            className={cn(
-              "p-2.5 rounded-full transition-all duration-200 hover:scale-105 active:scale-90 border cursor-pointer",
-              isLiked 
-                ? "bg-indigo-600/20 border-indigo-500/35 text-indigo-400" 
-                : (theme === 'light' ? "bg-white border-neutral-200 text-neutral-400 hover:text-neutral-700 hover:border-neutral-300 shadow-sm" : "bg-neutral-900/50 border-white/5 text-neutral-400 hover:text-white hover:border-white/10")
-            )}
-            title="Like response"
-          >
-            <ThumbsUp size={18} />
-          </button>
-          <button 
-            onClick={() => setIsDisliked(!isDisliked)}
-            className={cn(
-              "p-2.5 rounded-full transition-all duration-200 hover:scale-105 active:scale-90 border cursor-pointer",
-              isDisliked 
-                ? "bg-red-600/20 border-red-500/35 text-red-400" 
-                : (theme === 'light' ? "bg-white border-neutral-200 text-neutral-400 hover:text-neutral-700 hover:border-neutral-300 shadow-sm" : "bg-neutral-900/50 border-white/5 text-neutral-400 hover:text-white hover:border-white/10")
-            )}
-            title="Dislike response"
-          >
-            <ThumbsDown size={18} />
-          </button>
-          <button 
-            onClick={() => {
-              const lastMsg = allMessages[allMessages.length - 1];
-              if (lastMsg) {
-                navigator.clipboard.writeText(lastMsg.content);
-                setCopyFeedback(true);
-                setTimeout(() => setCopyFeedback(false), 2000);
-                console.log("[CLIPBOARD COPIED]", lastMsg.content);
-              }
-            }}
-            className={cn(
-              "p-2.5 rounded-full transition-all duration-200 hover:scale-105 active:scale-90 border flex items-center gap-1 cursor-pointer",
-              copyFeedback 
-                ? "bg-emerald-600/20 border-emerald-500/35 text-emerald-400" 
-                : (theme === 'light' ? "bg-white border-neutral-200 text-neutral-400 hover:text-neutral-700 hover:border-neutral-300 shadow-sm" : "bg-neutral-900/50 border-white/5 text-neutral-400 hover:text-white hover:border-white/10")
-            )}
-            title="Copy response"
-          >
-            <Copy size={18} />
-          </button>
-          <button 
-            className={cn(
-              "p-2.5 rounded-full transition-all duration-200 hover:scale-105 active:scale-90 border cursor-pointer",
-              theme === 'light' ? "bg-white border-neutral-200 text-neutral-400 hover:text-neutral-700 hover:border-neutral-300 shadow-sm" : "bg-neutral-900/50 border-white/5 text-neutral-400 hover:text-white hover:border-white/10"
-            )}
-            title="More options"
-          >
-            <MoreHorizontal size={18} />
-          </button>
-        </div>
+
 
         {/* State / Activity Indicator text with smooth transition */}
         <div className="relative z-20 shrink-0 h-8 flex items-center justify-center select-none my-1">

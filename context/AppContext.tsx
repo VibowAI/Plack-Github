@@ -150,7 +150,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session);
       updateAuthCookie(session);
       if (session?.user?.user_metadata) {
@@ -165,6 +165,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
         if (meta.live_voice) {
           setLiveVoice(meta.live_voice);
+        }
+      }
+      
+      if (event === 'SIGNED_OUT' || event === 'USER_DELETED') {
+        localStorage.clear();
+        sessionStorage.clear();
+        if (typeof window !== 'undefined') {
+          window.location.href = '/';
         }
       }
     });

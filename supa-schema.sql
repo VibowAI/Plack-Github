@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   email text NOT NULL,
   full_name text,
   theme_setting text DEFAULT 'system',
+  custom_instructions text,
   created_at timestamptz DEFAULT now() NOT NULL,
   PRIMARY KEY (id)
 );

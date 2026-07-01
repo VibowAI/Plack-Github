@@ -3,11 +3,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { 
   FileText, Copy, Edit3, Check, Sparkles, Send, X, RotateCcw, RotateCw,
   CheckCircle2, Trash2, StopCircle, 
-  ChevronDown, Save, Trash, Info
+  ChevronDown, Save, Trash, Info, ChevronLeft
 } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { cn, copyToClipboard } from '@/lib/utils';
 import MarkdownRenderer from '@/components/MarkdownRenderer';
-import { diffArrays, diffWordsWithSpace } from 'diff';
 import { debounce } from 'lodash';
 import { saveDocument, DocumentRecord, getDocumentById } from '@/lib/supabase/documents';
 
@@ -22,74 +21,6 @@ interface InlineDocumentBlockProps {
   onEditorOpen?: (isOpen: boolean) => void;
   width?: number;
 }
-
-type HunkStatus = 'pending' | 'accepted' | 'rejected';
-
-type DiffHunk = {
-  id: string;
-  type: 'unchanged' | 'change';
-  status?: HunkStatus;
-  oldText?: string;
-  newText?: string;
-  text?: string;
-};
-
-// --- Helper: Diff Logic ---
-
-function computeDiffHunks(oldText: string, newText: string): DiffHunk[] {
-  const oldParas = oldText.split(/(?:\r?\n){2,}/);
-  const newParas = newText.split(/(?:\r?\n){2,}/);
-
-  const rawDiff = diffArrays(oldParas, newParas);
-  
-  let hunks: DiffHunk[] = [];
-  let pendingOld: string[] = [];
-  let pendingNew: string[] = [];
-
-  const flushPending = () => {
-      if (pendingOld.length > 0 || pendingNew.length > 0) {
-          hunks.push({
-              id: Math.random().toString(),
-              type: 'change',
-              status: 'pending',
-              oldText: pendingOld.join('\n\n'),
-              newText: pendingNew.join('\n\n')
-          });
-          pendingOld = [];
-          pendingNew = [];
-      }
-  };
-
-  for (const d of rawDiff) {
-      if (d.removed) {
-          pendingOld.push(...d.value);
-      } else if (d.added) {
-          pendingNew.push(...d.value);
-      } else {
-          flushPending();
-          hunks.push({
-              id: Math.random().toString(),
-              type: 'unchanged',
-              text: d.value.join('\n\n')
-          });
-      }
-  }
-  flushPending();
-  return hunks;
-}
-
-const renderHunkText = (hunk: DiffHunk): string => {
-  if (hunk.type === 'unchanged') return hunk.text || "";
-  if (hunk.status === 'accepted') return hunk.newText || "";
-  if (hunk.status === 'rejected') return hunk.oldText || "";
-  
-  const parts = diffWordsWithSpace(hunk.oldText || "", hunk.newText || "");
-  return parts.map(p => {
-     if (p.added) return `<ins>${p.value}</ins>`;
-     if (p.removed) return `<del>${p.value}</del>`;
-     return p.value;
-  }).join('');
-};
 
 // --- Uncontrolled Editor Component ---
 
@@ -136,8 +67,6 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
   const [originalDocument, setOriginalDocument] = useState<string>(initialContent);
   const [draftDocument, setDraftDocument] = useState<string | null>(null);
   const [activeDocument, setActiveDocument] = useState<string>(initialContent);
-  const [revisionPending, setRevisionPending] = useState<boolean>(false);
-  const [diffHunks, setDiffHunks] = useState<DiffHunk[] | null>(null);
   
   const [validationState, setValidationState] = useState<{ isValid: boolean; message: string | null } | null>(null);
 
@@ -293,10 +222,16 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
 
   // --- Handlers: Document Actions ---
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(activeDocument);
+  const handleCopy = async () => {
+    await copyToClipboard(activeDocument);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const updateCheckpoints = (newBody: string) => {
+      const newCheckpoints = [...checkpoints.slice(0, currentCheckpointIndex + 1), newBody];
+      setCheckpoints(newCheckpoints);
+      setCurrentCheckpointIndex(newCheckpoints.length - 1);
   };
 
   const handleAskChanges = async (e: React.FormEvent) => {
@@ -383,20 +318,25 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
       } else if (accumulated.trim() === "") {
         isValid = false;
         reason = "AI returned blank spaces";
-      } else if (accumulated === combinedOld) {
-        isValid = false;
-        reason = "Draft matches original content exactly";
       }
 
       if (!isValid) {
         setValidationState({ isValid: false, message: reason });
-        setDraftDocument(null);
-        setRevisionPending(false);
       } else {
         setValidationState({ isValid: true, message: null });
-        setRevisionPending(true);
-        const hunks = computeDiffHunks(combinedOld, accumulated);
-        setDiffHunks(hunks);
+        
+        // Parse Title and Body
+        let newTitle = editedTitle;
+        let newBody = accumulated;
+        const titleMatch = accumulated.match(/^# ([^\n]+)\n+([\s\S]*)$/);
+        if (titleMatch) {
+            newTitle = titleMatch[1].trim();
+            newBody = titleMatch[2].trim();
+        }
+
+        setActiveDocument(newBody);
+        setEditedTitle(newTitle);
+        updateCheckpoints(newBody);
       }
 
       setDocChangePrompt("");
@@ -408,59 +348,6 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
     if (abortController) {
       abortController.abort();
     }
-  };
-
-  const handleApplyChangesToDocument = (finalHunks: DiffHunk[]) => {
-      const finalText = finalHunks.map(h => {
-         if (h.type === 'unchanged') return h.text;
-         if (h.status === 'accepted') return h.newText;
-         if (h.status === 'rejected') return h.oldText;
-         return h.oldText;
-      }).join('\n\n');
-
-      let newTitle = editedTitle;
-      let newBody = finalText;
-      const titleMatch = finalText.match(/^# ([^\n]+)\n+([\s\S]*)$/);
-      if (titleMatch) {
-          newTitle = titleMatch[1].trim();
-          newBody = titleMatch[2].trim();
-      }
-
-      setActiveDocument(newBody);
-      setEditedTitle(newTitle);
-      
-      const newCheckpoints = [...checkpoints.slice(0, currentCheckpointIndex + 1), newBody];
-      setCheckpoints(newCheckpoints);
-      setCurrentCheckpointIndex(newCheckpoints.length - 1);
-      
-      setDraftDocument(null);
-      setDiffHunks(null);
-      setRevisionPending(false);
-      setValidationState(null);
-  };
-
-  const handleAcceptAll = () => {
-    if (!diffHunks) return;
-    const resolvedHunks = diffHunks.map(h => h.type === 'change' ? { ...h, status: 'accepted' as HunkStatus } : h);
-    handleApplyChangesToDocument(resolvedHunks);
-  };
-
-  const handleRejectAll = () => {
-    setDraftDocument(null);
-    setDiffHunks(null);
-    setRevisionPending(false);
-    setValidationState(null);
-  };
-
-  const handleHunkAction = (id: string, action: 'accepted' | 'rejected') => {
-      if (!diffHunks) return;
-      const nextHunks = diffHunks.map(h => h.id === id ? { ...h, status: action } : h);
-      setDiffHunks(nextHunks);
-      
-      const stillPending = nextHunks.some(h => h.type === 'change' && h.status === 'pending');
-      if (!stillPending) {
-         handleApplyChangesToDocument(nextHunks);
-      }
   };
 
   const handleStopEditing = () => {
@@ -479,9 +366,11 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
     <>
       {/* INLINE PREVIEW (Always visible in chat flow) */}
       <div 
+        onClick={() => { if (isMobile) setIsEditing(true); }}
         className={cn(
           "flex flex-col border transition-all duration-300 w-full relative select-text rounded-2xl shadow-sm my-4 overflow-hidden",
-          theme === 'light' ? "bg-white border-neutral-200" : "bg-neutral-900 border-neutral-800/80"
+          theme === 'light' ? "bg-white border-neutral-200" : "bg-neutral-900 border-neutral-800/80",
+          isMobile ? "cursor-pointer active:scale-[0.99] origin-center" : ""
         )}
       >
         <div className={cn(
@@ -525,9 +414,10 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
         </div>
       </div>
 
-      {/* EDITOR SIDEBAR / FULLSCREEN (Conditionally rendered) */}
+      {/* EDITOR SIDEBAR / FULLSCREEN (Conditionally rendered via Portal) */}
       <AnimatePresence>
-        {isEditing && (
+        {isEditing && typeof document !== 'undefined' && (
+          require('react-dom').createPortal(
           <>
             {/* Backdrop for Editor (Mobile Only) */}
             {isMobile && (
@@ -556,7 +446,11 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
                       ? "bg-[#06030f] border-indigo-500/10" 
                       : "bg-neutral-950 border-neutral-800")
               )}
-              style={!isMobile ? { width: width || 380 } : undefined}
+              style={isMobile ? {
+                paddingTop: 'env(safe-area-inset-top)',
+                paddingBottom: 'env(safe-area-inset-bottom)',
+                height: '100dvh'
+              } : { width: width || 380, minWidth: 320, maxWidth: 420 }}
             >
               {/* Header with Save Status */}
               <div className={cn(
@@ -564,47 +458,78 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
                 theme === 'light' ? "bg-white/90 border-neutral-100" : "bg-neutral-900/90 border-neutral-800/60",
                 isMobile && "pt-safe"
               )}>
-                <div className="flex items-center gap-3 overflow-hidden">
-                  <button 
-                    onClick={handleStopEditing}
-                    className={cn(
-                      "p-2 rounded-full transition-all cursor-pointer",
-                      theme === 'light' ? "hover:bg-neutral-100 text-neutral-500" : "hover:bg-neutral-800 text-neutral-400"
-                    )}
-                  >
-                    <X size={20} />
-                  </button>
-                  <div className={cn(
-                    "p-2 rounded-xl shrink-0",
-                    theme === 'light' ? "bg-indigo-50 text-indigo-600 shadow-sm" : "bg-indigo-500/10 text-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.1)]"
-                  )}>
-                    <FileText size={20} />
-                  </div>
-                  <div className="flex flex-col overflow-hidden">
+                {isMobile ? (
+                  <div className="flex items-center gap-3 w-full justify-between select-none">
+                    <button 
+                      onClick={handleStopEditing}
+                      className={cn(
+                        "flex items-center gap-1 py-2 px-1 -ml-1 rounded-full transition-all cursor-pointer font-bold text-[14px]",
+                        theme === 'light' ? "text-indigo-600 hover:text-indigo-800" : "text-indigo-400 hover:text-indigo-300"
+                      )}
+                    >
+                      <ChevronLeft size={20} />
+                      <span>Back</span>
+                    </button>
                     <span className={cn(
-                      "font-sans font-extrabold text-[15px] tracking-tight truncate",
+                      "font-sans font-extrabold text-[15px] tracking-tight truncate flex-1 text-center px-4",
                       theme === 'light' ? "text-neutral-900" : "text-neutral-100"
                     )}>
                       {editedTitle || "Untitled Document"}
                     </span>
-                    <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest opacity-40">
-                      {saveStatus === 'saving' && <span className="flex items-center gap-1"><Sparkles size={10} className="animate-spin" /> Saving...</span>}
-                      {saveStatus === 'saved' && <span className="flex items-center gap-1 text-emerald-500"><Check size={10} /> Saved to Supabase</span>}
-                      {saveStatus === 'failed' && <span className="flex items-center gap-1 text-rose-500">Failed</span>}
-                      {saveStatus === 'idle' && <span>v{currentCheckpointIndex + 1}</span>}
-                    </span>
+                    <div className="w-16 shrink-0 flex justify-end">
+                      <span className="text-[10px] font-bold opacity-40 uppercase tracking-widest text-right">
+                        {saveStatus === 'saving' && "..."}
+                        {saveStatus === 'saved' && "Saved"}
+                        {saveStatus === 'failed' && "Err"}
+                        {saveStatus === 'idle' && `v${currentCheckpointIndex + 1}`}
+                      </span>
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <>
+                    <div className="flex items-center gap-3 overflow-hidden">
+                      <button 
+                        onClick={handleStopEditing}
+                        className={cn(
+                          "p-2 rounded-full transition-all cursor-pointer",
+                          theme === 'light' ? "hover:bg-neutral-100 text-neutral-500" : "hover:bg-neutral-800 text-neutral-400"
+                        )}
+                      >
+                        <X size={20} />
+                      </button>
+                      <div className={cn(
+                        "p-2 rounded-xl shrink-0",
+                        theme === 'light' ? "bg-indigo-50 text-indigo-600 shadow-sm" : "bg-indigo-500/10 text-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.1)]"
+                      )}>
+                        <FileText size={20} />
+                      </div>
+                      <div className="flex flex-col overflow-hidden">
+                        <span className={cn(
+                          "font-sans font-extrabold text-[15px] tracking-tight truncate",
+                          theme === 'light' ? "text-neutral-900" : "text-neutral-100"
+                        )}>
+                          {editedTitle || "Untitled Document"}
+                        </span>
+                        <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest opacity-40">
+                          {saveStatus === 'saving' && <span className="flex items-center gap-1"><Sparkles size={10} className="animate-spin" /> Saving...</span>}
+                          {saveStatus === 'saved' && <span className="flex items-center gap-1 text-emerald-500"><Check size={10} /> Saved to Supabase</span>}
+                          {saveStatus === 'failed' && <span className="flex items-center gap-1 text-rose-500">Failed</span>}
+                          {saveStatus === 'idle' && <span>v{currentCheckpointIndex + 1}</span>}
+                        </span>
+                      </div>
+                    </div>
 
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    onClick={handleCopy}
-                    className={cn("p-2 rounded-xl transition-all cursor-pointer hover:scale-105 active:scale-95", theme === 'light' ? "hover:bg-neutral-100 text-neutral-500" : "hover:bg-neutral-800 text-neutral-400")}
-                    title="Copy Content"
-                  >
-                    {copied ? <Check size={16} className="text-emerald-500" /> : <Copy size={16} />}
-                  </button>
-                </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={handleCopy}
+                        className={cn("p-2 rounded-xl transition-all cursor-pointer hover:scale-105 active:scale-95", theme === 'light' ? "hover:bg-neutral-100 text-neutral-500" : "hover:bg-neutral-800 text-neutral-400")}
+                        title="Copy Content"
+                      >
+                        {copied ? <Check size={16} className="text-emerald-500" /> : <Copy size={16} />}
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
 
               {/* Main Content Area */}
@@ -614,60 +539,28 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
                 className="flex-1 overflow-y-auto px-6 sm:px-12 py-8 sm:py-12 scroll-smooth select-text relative"
               >
                 <div className="max-w-[800px] mx-auto">
-                  {isRevisionStreaming && draftDocument ? (
-                    <div className="prose prose-neutral dark:prose-invert max-w-none font-sans pt-2 pb-6">
-                      <div className="flex items-center gap-3 mb-6 sm:mb-10 p-3 sm:p-4 bg-indigo-500/5 border border-dashed border-indigo-500/20 rounded-[24px] animate-pulse">
-                        <Sparkles size={16} className="text-indigo-500" />
-                        <span className="text-[11px] font-black text-indigo-500 uppercase tracking-widest">AI Drafting...</span>
-                      </div>
-                      <MarkdownRenderer content={draftDocument} theme={theme} />
-                    </div>
-                  ) : diffHunks !== null ? (
-                    <div className="flex flex-col gap-8 sm:gap-12 pt-2 pb-32">
-                      {diffHunks.map(hunk => {
-                        const isPending = hunk.type === 'change' && hunk.status === 'pending';
-                        return (
-                          <div key={hunk.id} className="relative group/hunk">
-                            {isPending && (
-                              <div className="hidden lg:flex absolute -left-20 top-0 flex-col gap-2 opacity-0 group-hover/hunk:opacity-100 transition-all duration-500 transform translate-x-4 group-hover/hunk:translate-x-0">
-                                <button onClick={() => handleHunkAction(hunk.id, 'accepted')} className="p-3 rounded-2xl border border-emerald-500/30 bg-emerald-50 text-emerald-600 shadow-lg hover:scale-110 active:scale-95 transition-all cursor-pointer"><Check size={20} /></button>
-                                <button onClick={() => handleHunkAction(hunk.id, 'rejected')} className="p-3 rounded-2xl border border-rose-500/30 bg-rose-50 text-rose-600 shadow-lg hover:scale-110 active:scale-95 transition-all cursor-pointer"><X size={20} /></button>
-                              </div>
-                            )}
-                            <div className={cn("font-sans transition-all duration-500", isPending && (theme === 'light' ? "bg-indigo-50/30 p-4 sm:p-8 sm:-mx-8 rounded-[24px] sm:rounded-[32px] border border-indigo-100/50 shadow-inner" : "bg-indigo-950/10 p-4 sm:p-8 sm:-mx-8 rounded-[24px] sm:rounded-[32px] border border-indigo-500/10 shadow-inner"))}>
-                              <MarkdownRenderer content={renderHunkText(hunk)} theme={theme} />
-                              {isPending && (
-                                <div className="lg:hidden flex gap-3 sm:gap-4 mt-6 sm:mt-8 pt-6 sm:pt-8 border-t border-indigo-200/50">
-                                  <button onClick={() => handleHunkAction(hunk.id, 'accepted')} className="flex items-center justify-center gap-2 text-[11px] sm:text-[12px] font-black uppercase px-4 sm:px-6 py-3 sm:py-4 bg-emerald-500 text-white rounded-xl sm:rounded-2xl flex-1 shadow-lg shadow-emerald-500/30 cursor-pointer"><Check size={16}/> Accept</button>
-                                  <button onClick={() => handleHunkAction(hunk.id, 'rejected')} className="flex items-center justify-center gap-2 text-[11px] sm:text-[12px] font-black uppercase px-4 sm:px-6 py-3 sm:py-4 bg-neutral-200 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 rounded-xl sm:rounded-2xl flex-1 active:scale-95 cursor-pointer"><Trash2 size={16}/> Reject</button>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  ) : (
-                    <div className="space-y-6 sm:space-y-8 pb-32">
-                      <input 
-                        type="text" 
-                        value={editedTitle} 
-                        onChange={(e) => setEditedTitle(e.target.value)} 
-                        className={cn("w-full text-3xl sm:text-5xl font-black tracking-tighter px-0 bg-transparent border-none outline-none focus:ring-0 placeholder:opacity-20", theme === 'light' ? "text-neutral-900" : "text-white")} 
-                        placeholder="Document Title" 
-                      />
-                      <textarea
-                        ref={editorRef as any}
-                        value={activeDocument}
-                        onChange={(e) => setActiveDocument(e.target.value)}
-                        placeholder="Start typing your elegant document body..."
-                        className={cn(
-                          "w-full min-h-[500px] sm:min-h-[700px] font-mono text-[15px] sm:text-[17px] leading-[1.6] sm:leading-[1.8] px-0 py-2 sm:py-4 bg-transparent border-none outline-none focus:ring-0 whitespace-pre-wrap transition-opacity duration-300 resize-none focus:ring-transparent focus:border-transparent focus:ring-offset-0 select-text cursor-text", 
-                          theme === 'light' ? "text-neutral-700 placeholder-neutral-400" : "text-neutral-300 placeholder-neutral-600"
-                        )} 
-                      />
-                    </div>
-                  )}
+                  <div className="space-y-6 sm:space-y-8 pb-32">
+                    <input 
+                      type="text" 
+                      value={editedTitle} 
+                      onChange={(e) => setEditedTitle(e.target.value)} 
+                      className={cn("w-full text-3xl sm:text-5xl font-black tracking-tighter px-0 bg-transparent border-none outline-none focus:ring-0 placeholder:opacity-20", theme === 'light' ? "text-neutral-900" : "text-white")} 
+                      placeholder="Document Title" 
+                      disabled={isRevisionStreaming}
+                    />
+                    <textarea
+                      ref={editorRef as any}
+                      value={isRevisionStreaming && draftDocument ? draftDocument : activeDocument}
+                      onChange={(e) => setActiveDocument(e.target.value)}
+                      placeholder="Start typing your elegant document body..."
+                      disabled={isRevisionStreaming}
+                      className={cn(
+                        "w-full min-h-[500px] sm:min-h-[700px] font-mono text-[15px] sm:text-[17px] leading-[1.6] sm:leading-[1.8] px-0 py-2 sm:py-4 bg-transparent border-none outline-none focus:ring-0 whitespace-pre-wrap transition-opacity duration-300 resize-none focus:ring-transparent focus:border-transparent focus:ring-offset-0 select-text cursor-text", 
+                        theme === 'light' ? "text-neutral-700 placeholder-neutral-400" : "text-neutral-300 placeholder-neutral-600",
+                        isRevisionStreaming && "opacity-50 cursor-not-allowed"
+                      )} 
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -679,19 +572,6 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
                 )}
               >
                 <div className="max-w-[800px] mx-auto flex flex-col gap-4 sm:gap-6">
-                  {revisionPending && diffHunks && (
-                    <div className="flex items-center justify-between animate-in slide-in-from-bottom-2 duration-500">
-                      <div className="flex items-center gap-2 sm:gap-3">
-                        <div className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-indigo-500 animate-ping" />
-                        <span className="text-[10px] sm:text-[11px] font-black uppercase tracking-[0.1em] sm:tracking-[0.2em] opacity-60">Revision Pending</span>
-                      </div>
-                      <div className="flex gap-2 sm:gap-3">
-                        <button onClick={handleAcceptAll} className="px-4 sm:px-6 py-1.5 sm:py-2 bg-indigo-600 text-white rounded-full text-[10px] sm:text-[11px] font-black uppercase tracking-widest hover:bg-indigo-700 shadow-2xl active:scale-95 transition-all cursor-pointer">Accept</button>
-                        <button onClick={handleRejectAll} className="px-4 sm:px-6 py-1.5 sm:py-2 bg-neutral-200 dark:bg-neutral-800 rounded-full text-[10px] sm:text-[11px] font-black uppercase tracking-widest hover:bg-neutral-300 dark:hover:bg-neutral-700 active:scale-95 transition-all cursor-pointer">Reject</button>
-                      </div>
-                    </div>
-                  )}
-
                   <div className="flex items-center gap-2">
                     <button 
                       onClick={() => {
@@ -762,7 +642,7 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
                 </div>
               </div>
             </motion.div>
-          </>
+          </>, document.body)
         )}
       </AnimatePresence>
     </>

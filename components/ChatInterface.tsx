@@ -67,7 +67,7 @@ import { Attachment, Message, Chat } from '@/components/chat/types';
 import PlackLive from '@/components/PlackLive';
 import MarkdownRenderer from '@/components/MarkdownRenderer';
 import InlineDocumentBlock from '@/components/InlineDocumentBlock';
-import { cn } from '@/lib/utils';
+import { cn, copyToClipboard } from '@/lib/utils';
 import { AnimatePresence, motion } from 'framer-motion';
 import { createClient } from '@/lib/supabase/client';
 import Image from 'next/image';
@@ -411,8 +411,16 @@ export default function ChatInterface() {
   }, [isSourcesSidebarOpen]);
 
   useEffect(() => {
-    if (activeDocumentEditorId) setIsSourcesSidebarOpen(false);
+    if (activeDocumentEditorId) {
+      setIsSourcesSidebarOpen(false);
+    }
   }, [activeDocumentEditorId]);
+
+  useEffect(() => {
+    if (isSourcesSidebarOpen) {
+      setActiveDocumentEditorId(null);
+    }
+  }, [isSourcesSidebarOpen]);
 
   useEffect(() => {
     setIsSourcesSidebarOpen(false);
@@ -756,6 +764,18 @@ export default function ChatInterface() {
 
     const savedInstructions = localStorage.getItem('plack-custom-instructions') || '';
     setCustomInstructions(savedInstructions);
+    
+    // Attempt to load custom instructions from Supabase
+    if (session?.user?.id) {
+      const supabase = createClient();
+      supabase.from('profiles').select('custom_instructions').eq('id', session.user.id).single()
+        .then(({ data }) => {
+          if (data && data.custom_instructions) {
+            setCustomInstructions(data.custom_instructions);
+            localStorage.setItem('plack-custom-instructions', data.custom_instructions);
+          }
+        });
+    }
 
     const savedStreaming = localStorage.getItem('plack-streaming-responses');
     setStreamingResponses(savedStreaming !== 'false');
@@ -768,7 +788,19 @@ export default function ChatInterface() {
 
     const savedAutoSave = localStorage.getItem('plack-auto-save-memories');
     setAutoSaveMemories(savedAutoSave !== 'false');
-  }, []);
+  }, [session?.user?.id]); // Also reload when session changes
+
+  // Auto-save Custom Instructions to DB
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    const timer = setTimeout(() => {
+      const supabase = createClient();
+      supabase.from('profiles').update({ custom_instructions: customInstructions }).eq('id', session.user.id).then(({ error }) => {
+        if (error) console.error("Failed to save custom instructions:", error);
+      });
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [customInstructions, session?.user?.id]);
 
   const handleSignOut = async () => {
     const supabase = createClient();
@@ -1642,7 +1674,7 @@ export default function ChatInterface() {
   }, []);
 
   useEffect(() => {
-    if (isNearBottomRef.current || isStreaming || isLiveModeOpen) {
+    if (isNearBottomRef.current) {
       if (isLiveModeOpen) {
         messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
       } else {
@@ -1849,40 +1881,12 @@ export default function ChatInterface() {
     setTimeout(() => setToastMessage(null), duration);
   };
 
-  const handleCopyMessage = (content: string) => {
-    const fallbackCopy = (text: string) => {
-      try {
-        const textArea = document.createElement("textarea");
-        textArea.value = text;
-        textArea.style.position = "fixed";
-        textArea.style.opacity = "0";
-        document.body.appendChild(textArea);
-        textArea.focus();
-        textArea.select();
-        const successful = document.execCommand('copy');
-        document.body.removeChild(textArea);
-        if (successful) {
-          showToast("Copied", 2000);
-        } else {
-          showToast("Failed to copy", 2000);
-        }
-      } catch (err) {
-        console.error("Fallback copy failed", err);
-        showToast("Failed to copy", 2000);
-      }
-    };
-
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(content)
-        .then(() => {
-          showToast("Copied", 2000);
-        })
-        .catch((err) => {
-          console.error("Clipboard API failed, trying fallback", err);
-          fallbackCopy(content);
-        });
+  const handleCopyMessage = async (content: string) => {
+    const success = await copyToClipboard(content);
+    if (success) {
+      showToast("Copied", 2000);
     } else {
-      fallbackCopy(content);
+      showToast("Failed to copy", 2000);
     }
   };
 
@@ -4258,28 +4262,33 @@ export default function ChatInterface() {
       </AnimatePresence>
 
       {/* Floating Glassmorphic Sidebar */}
-      <Sidebar 
-        isOpen={isSidebarOpen}
-        setIsOpen={setIsSidebarOpen}
-        activeChatId={activeChatId}
-        onSelectChat={selectChat}
-        onNewChat={clearChat}
-        chats={chats}
-        onRenameChat={renameChat}
-        onDeleteChat={handleDeleteChat}
-        onTogglePinChat={handleTogglePinChat}
-        theme={theme}
-        user={session?.user}
-        onOpenSettings={() => setIsSettingsOpen(true)}
-        onLogoutClick={() => setIsLogoutConfirmOpen(true)}
-        width={sidebarWidth}
-        onWidthChange={setSidebarWidth}
-        onCopyLink={() => showToast("Copied chat link to clipboard!")}
-      />
+      {!(isMobile && activeDocumentEditorId) && (
+        <Sidebar 
+          isOpen={isSidebarOpen}
+          setIsOpen={setIsSidebarOpen}
+          activeChatId={activeChatId}
+          onSelectChat={selectChat}
+          onNewChat={clearChat}
+          chats={chats}
+          onRenameChat={renameChat}
+          onDeleteChat={handleDeleteChat}
+          onTogglePinChat={handleTogglePinChat}
+          theme={theme}
+          user={session?.user}
+          onOpenSettings={() => setIsSettingsOpen(true)}
+          onLogoutClick={() => setIsLogoutConfirmOpen(true)}
+          width={sidebarWidth}
+          onWidthChange={setSidebarWidth}
+          onCopyLink={() => showToast("Copied chat link to clipboard!")}
+        />
+      )}
 
       {/* Main Container Wrapper - Handles layout alignment dynamic shifting */}
       <div 
-        className="flex-1 flex flex-col min-h-screen transition-all duration-300 ease-out"
+        className={cn(
+          "flex-1 flex flex-col min-h-screen transition-all duration-300 ease-out",
+          isMobile && activeDocumentEditorId ? "hidden invisible opacity-0 pointer-events-none w-0 h-0 overflow-hidden" : ""
+        )}
         style={{
           paddingLeft: isSidebarOpen && !isMobile ? `${sidebarWidth}px` : '0px',
           paddingRight: (isSourcesSidebarOpen || activeDocumentEditorId) && !isMobile ? `${sourcesWidth}px` : '0px'
@@ -4862,9 +4871,9 @@ export default function ChatInterface() {
                             <div className="py-2">
                               <AIActivityPanel 
                                 theme={theme}
-                                actionName={message.isDeepResearch ? "Deep Research Processing..." : isWebSearchEnabled ? "Searching the web..." : "Understanding request..."}
-                                icon={message.isDeepResearch ? Cpu : isWebSearchEnabled ? Search : BrainCircuit}
-                                colorClass={message.isDeepResearch ? "bg-purple-500/10 text-purple-500" : isWebSearchEnabled ? "bg-indigo-500/10 text-indigo-500" : undefined}
+                                actionName={message.researchStatus || (message.isDeepResearch ? "Deep Research Processing..." : isWebSearchEnabled ? "Searching the web..." : "Understanding request...")}
+                                icon={message.isDeepResearch ? Cpu : (message.researchStatus?.includes('Search') || isWebSearchEnabled) ? Search : BrainCircuit}
+                                colorClass={message.isDeepResearch ? "bg-purple-500/10 text-purple-500" : (message.researchStatus?.includes('Search') || isWebSearchEnabled) ? "bg-indigo-500/10 text-indigo-500" : undefined}
                               />
                             </div>
                           ) : (
