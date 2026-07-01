@@ -7,49 +7,18 @@ import { createClient } from '@/lib/supabase/client';
 import { useAppContext } from '@/context/AppContext';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { 
-  Sparkles, 
-  MoreHorizontal, 
-  Pencil, 
-  Trash2, 
-  X, 
-  Settings, 
-  LogOut, 
-  ChevronUp,
-  Pin,
-  Link as LinkIcon,
-  Search,
-  Compass,
-  MessageSquare,
-  FileText,
-  CheckCircle2,
-  ChevronRight,
-  Bell,
-  Loader2,
-  User,
-  HelpCircle,
-  HeartHandshake,
-  Flame,
-  Shield,
-  BookOpen,
-  Bug,
-  Lightbulb,
-  TrendingUp,
-  Info,
-  Plug,
-  Workflow,
-  Plus
-} from 'lucide-react';
+import * as Icons from '@/lib/icons';
+import { Chat } from '@/components/chat/types';
 import { cn } from '@/lib/utils';
 import Image from 'next/image';
 import brandingLogo from '@/src/assets/images/branding_logo_1780697091587.png';
 
-interface Chat {
-  id: string;
-  title: string;
-  created_at: string;
-  is_pinned?: boolean;
-}
+// Re-map icons for compatibility with existing code
+const {
+  Sparkles, MoreHorizontal, Pencil, Trash2, X, Settings, LogOut, ChevronUp, Pin, LinkIcon, Search, Compass,
+  MessageSquare, FileText, CheckCircle2, ChevronRight, Bell, Loader2, User, HelpCircle, HeartHandshake,
+  Flame, Shield, BookOpen, Bug, Lightbulb, TrendingUp, Info, Plug, Workflow, Plus
+} = Icons;
 
 interface SidebarProps {
   isOpen: boolean;

@@ -2,67 +2,8 @@
 
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useRouter, useParams, usePathname } from 'next/navigation';
-import { 
-  Send, 
-  Plus, 
-  Trash2, 
-  Sparkles, 
-  BrainCircuit, 
-  Minimize2, 
-  Maximize2, 
-  ArrowUp, 
-  FileText, 
-  Image as ImageIcon, 
-  Paperclip, 
-  X, 
-  Camera,
-  Loader2, 
-  HelpCircle,
-  FileCode,
-  Layers,
-  ChevronDown,
-  ChevronUp,
-  Flame,
-  History as HistoryIcon,
-  Zap,
-  RefreshCw,
-  Mic,
-  MicOff,
-  Menu,
-  Square,
-  Check,
-  Sun,
-  Moon,
-  Orbit,
-  LogOut,
-  Upload,
-  User,
-  Activity,
-  Laptop,
-  Eye,
-  Download,
-  Copy,
-  Settings2,
-  Cpu,
-  Bookmark,
-  Share2,
-  Heart,
-  ChevronRight,
-  Search,
-  Plug,
-  EyeOff,
-  Shield,
-  AlertCircle,
-  Globe,
-  CheckCircle2,
-  Radio,
-  Video,
-  Brain,
-  CheckSquare,
-  AudioLines,
-  MoreHorizontal,
-  ChevronLeft
-} from 'lucide-react';
+import * as Icons from '@/lib/icons';
+import { Attachment, Message, Chat } from '@/components/chat/types';
 import PlackLive from '@/components/PlackLive';
 import MarkdownRenderer from '@/components/MarkdownRenderer';
 import InlineDocumentBlock from '@/components/InlineDocumentBlock';
@@ -83,45 +24,14 @@ import SearchSourcesSidebar from '@/components/SearchSourcesSidebar';
 import { logger, LogCategory } from '@/lib/logger';
 import { useAppContext } from '@/context/AppContext';
 
-// Message schema
-interface Attachment {
-  id?: string;
-  name: string;
-  type: string;
-  size: number;
-  data?: string; // Base64 data for local preview
-  textContent?: string; // Loaded text content if applicable
-  publicUrl?: string; // Storage public URL
-  storagePath?: string; // Storage path
-  uploadFailed?: boolean; // Attachment failed to upload to storage
-  localFile?: File; // Defer upload until sendMessage
-}
-
-interface Message {
-  id: string;
-  role: 'user' | 'model' | 'system';
-  content: string;
-  reasoning?: string;
-  isStreaming?: boolean;
-  attachments?: Attachment[];
-  groundingMetadata?: any;
-  isDeepResearch?: boolean;
-  researchTimeline?: string[];
-  activeStageIndex?: number;
-  researchStatus?: string;
-  memorySaved?: { category: string; content: string; action?: 'add' | 'update' | 'delete' };
-  memoryLimitReached?: boolean;
-  isMemoryTurn?: boolean;
-  memoriesUsedCount?: number;
-  memoriesUsed?: any[];
-  isManualMemories?: boolean;
-  profileSummary?: {
-    writingStyle?: string;
-    uiStyle?: string;
-    interests?: string;
-    projectTypes?: string;
-  };
-}
+// Re-map icons for compatibility with existing code
+const {
+  Send, Plus, Trash2, Sparkles, BrainCircuit, Minimize2, Maximize2, ArrowUp, FileText, ImageIcon, Paperclip, X, Camera,
+  Loader2, HelpCircle, FileCode, Layers, ChevronDown, ChevronUp, Flame, HistoryIcon, Zap, RefreshCw, Mic, MicOff,
+  Menu, Square, Check, Sun, Moon, Orbit, LogOut, Upload, User, Activity, Laptop, Eye, Download, Copy, Settings2,
+  Cpu, Bookmark, Share2, Heart, ChevronRight, Search, Plug, EyeOff, Shield, AlertCircle, Globe, CheckCircle2, Radio,
+  Video, Brain, CheckSquare, AudioLines, MoreHorizontal, ChevronLeft
+} = Icons;
 
 interface ErrorReport {
   failingComponent: string;

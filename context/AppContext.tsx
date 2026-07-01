@@ -9,7 +9,7 @@ import { logger, LogCategory } from '@/lib/logger';
 type ThemeMode = 'light' | 'dark' | 'cosmic';
 type ThemeSetting = 'light' | 'dark' | 'cosmic' | 'system';
 type AccentColor = 'blue' | 'purple' | 'orange' | 'green' | 'red' | 'pink' | 'custom';
-
+ 
 interface AppContextType {
   session: any;
   user: any;
@@ -46,9 +46,18 @@ interface AppContextType {
   isStreaming: boolean;
   setIsStreaming: React.Dispatch<React.SetStateAction<boolean>>;
   refreshChats: () => Promise<void>;
+  supabase: any;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
+
+export function useAppContext() {
+  const context = useContext(AppContext);
+  if (context === undefined) {
+    throw new Error('useAppContext must be used within an AppProvider');
+  }
+  return context;
+}
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -74,7 +83,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [activeStreams, setActiveStreams] = useState<Record<string, any>>({});
   const [isStreaming, setIsStreaming] = useState(false);
 
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
   // Auth initialization and Sync metadata
   useEffect(() => {
@@ -405,7 +414,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setActiveStreams,
       isStreaming,
       setIsStreaming,
-      refreshChats
+      refreshChats,
+      supabase
     }}>
       <style dangerouslySetInnerHTML={{ __html: `
         :root {
@@ -455,10 +465,3 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function useAppContext() {
-  const context = useContext(AppContext);
-  if (context === undefined) {
-    throw new Error('useAppContext must be used within an AppProvider');
-  }
-  return context;
-}
