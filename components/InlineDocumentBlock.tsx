@@ -6,8 +6,18 @@ import { createPortal } from 'react-dom';
 import { 
   FileText, Copy, Edit3, Check, Sparkles, Send, X, RotateCcw, RotateCw,
   CheckCircle2, Trash2, StopCircle, 
-  ChevronDown, Save, Trash, Info, ChevronLeft
+  ChevronDown, Save, Trash, Info, ChevronLeft, ArrowUp, Square
 } from 'lucide-react';
+
+const SUGGESTIONS = [
+  'Improve writing',
+  'Make shorter',
+  'Expand',
+  'Translate',
+  'Professional tone',
+  'Fix grammar',
+  'Summarize'
+];
 import { cn, copyToClipboard } from '@/lib/utils';
 import MarkdownRenderer from '@/components/MarkdownRenderer';
 import { debounce } from 'lodash';
@@ -106,10 +116,12 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
   const [activeDocument, setActiveDocument] = useState<string>(initialContent);
   
   const [validationState, setValidationState] = useState<{ isValid: boolean; message: string | null } | null>(null);
+  const [diffHunks, setDiffHunks] = useState<any>(null);
 
   const [editedTitle, setEditedTitle] = useState(title);
   const [docChangePrompt, setDocChangePrompt] = useState("");
   const [isRevisionStreaming, setIsRevisionStreaming] = useState(false);
+  const [isRevisionPending, setIsRevisionPending] = useState(false);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
@@ -377,7 +389,7 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
 
     setOriginalDocument(activeDocument);
     setDraftDocument("");
-    setRevisionPending(true);
+    setIsRevisionPending(true);
     setIsRevisionStreaming(true);
     setValidationState(null);
     setDiffHunks(null);
@@ -457,25 +469,43 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
 
       if (!isValid) {
         setValidationState({ isValid: false, message: reason });
+        setIsRevisionPending(false);
       } else {
         setValidationState({ isValid: true, message: null });
-        
-        // Parse Title and Body
-        let newTitle = editedTitle;
-        let newBody = accumulated;
-        const titleMatch = accumulated.match(/^# ([^\n]+)\n+([\s\S]*)$/);
-        if (titleMatch) {
-            newTitle = titleMatch[1].trim();
-            newBody = titleMatch[2].trim();
-        }
-
-        setActiveDocument(newBody);
-        setEditedTitle(newTitle);
-        updateCheckpoints(newBody);
+        // Revision is now in draftDocument (set via stream)
+        // We do NOT modify activeDocument yet
+        setIsRevisionPending(true);
       }
 
       setDocChangePrompt("");
     }
+  };
+
+  const handleAcceptRevision = () => {
+    if (!draftDocument) return;
+    
+    // Parse Title and Body
+    let newTitle = editedTitle;
+    let newBody = draftDocument;
+    const titleMatch = draftDocument.match(/^# ([^\n]+)\n+([\s\S]*)$/);
+    if (titleMatch) {
+      newTitle = titleMatch[1].trim();
+      newBody = titleMatch[2].trim();
+    }
+
+    setActiveDocument(newBody);
+    setEditedTitle(newTitle);
+    updateCheckpoints(newBody);
+    
+    setDraftDocument(null);
+    setIsRevisionPending(false);
+    setValidationState(null);
+  };
+
+  const handleRejectRevision = () => {
+    setDraftDocument(null);
+    setIsRevisionPending(false);
+    setValidationState(null);
   };
 
   const handleStopStreaming = () => {
@@ -742,14 +772,14 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
                           />
                           <textarea
                             ref={editorRef as any}
-                            value={isRevisionStreaming && draftDocument ? draftDocument : activeDocument}
+                            value={(isRevisionStreaming || isRevisionPending) && draftDocument !== null ? draftDocument : activeDocument}
                             onChange={(e) => setActiveDocument(e.target.value)}
                             placeholder="Start typing your elegant document body..."
-                            disabled={isRevisionStreaming}
+                            disabled={isRevisionStreaming || isRevisionPending}
                             className={cn(
                               "w-full min-h-[500px] sm:min-h-[700px] font-mono text-[15px] sm:text-[17px] leading-[1.6] sm:leading-[1.8] px-0 py-2 sm:py-4 bg-transparent border-none outline-none focus:ring-0 whitespace-pre-wrap transition-opacity duration-300 resize-none focus:ring-transparent focus:border-transparent focus:ring-offset-0 select-text cursor-text", 
                               theme === 'light' ? "text-neutral-700 placeholder-neutral-400" : "text-neutral-300 placeholder-neutral-600",
-                              isRevisionStreaming && "opacity-50 cursor-not-allowed"
+                              (isRevisionStreaming || isRevisionPending) && "opacity-80"
                             )} 
                           />
                         </div>
@@ -761,49 +791,159 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
                 {/* Bottom Sticky Composer: Ask Changes */}
                 <div 
                   className={cn(
-                    "sticky bottom-0 left-0 right-0 z-[110] px-4 sm:px-10 py-6 sm:py-8 border-t backdrop-blur-3xl", 
-                    theme === 'light' ? "bg-white/98 border-neutral-100 shadow-[0_-20px_50px_rgba(0,0,0,0.05)]" : "bg-neutral-900/98 border-neutral-800 shadow-[0_-20px_50px_rgba(0,0,0,0.3)]"
+                    "sticky bottom-0 left-0 right-0 z-[110] px-4 sm:px-6 py-4 border-t backdrop-blur-3xl", 
+                    theme === 'light' 
+                      ? "bg-white/95 border-neutral-100 shadow-[0_-10px_30px_rgba(0,0,0,0.03)]" 
+                      : "bg-neutral-900/95 border-neutral-800/50 shadow-[0_-10px_30px_rgba(0,0,0,0.2)]",
+                    isMobile && "pb-safe"
                   )}
                 >
-                  <div className="max-w-[800px] mx-auto flex flex-col gap-4 sm:gap-6">
+                  <div className="max-w-[800px] mx-auto flex flex-col gap-3">
+                    {/* Review Actions (Accept/Reject) */}
+                    <AnimatePresence>
+                      {isRevisionPending && !isRevisionStreaming && (
+                        <motion.div 
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: 10 }}
+                          className={cn(
+                            "flex items-center justify-between p-3 rounded-[20px] border backdrop-blur-xl mb-1 shadow-lg",
+                            theme === 'light' ? "bg-white border-neutral-200" : "bg-neutral-800 border-neutral-700"
+                          )}
+                        >
+                          <div className="flex items-center gap-2 pl-2">
+                            <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
+                            <span className={cn("text-[11px] font-bold uppercase tracking-wider", theme === 'light' ? "text-neutral-500" : "text-neutral-400")}>
+                              Review Changes
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={handleRejectRevision}
+                              className={cn(
+                                "px-4 py-1.5 rounded-full text-[11px] font-bold transition-all active:scale-95 cursor-pointer",
+                                theme === 'light' ? "text-neutral-500 hover:bg-neutral-100" : "text-neutral-400 hover:bg-neutral-700"
+                              )}
+                            >
+                              Reject
+                            </button>
+                            <button
+                              onClick={handleAcceptRevision}
+                              className="px-5 py-1.5 rounded-full bg-indigo-600 text-white text-[11px] font-bold shadow-md hover:bg-indigo-700 transition-all active:scale-95 cursor-pointer flex items-center gap-1.5"
+                            >
+                              <Check size={14} /> Accept
+                            </button>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
+                    {/* Suggestions Chips (Horizontal Scroll) */}
+                    <AnimatePresence>
+                      {!isRevisionStreaming && !isRevisionPending && (
+                        <motion.div 
+                          initial={{ opacity: 0, y: 5 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: 5 }}
+                          className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none no-scrollbar select-none"
+                        >
+                          {SUGGESTIONS.map((suggestion) => (
+                            <button
+                              key={suggestion}
+                              onClick={() => setDocChangePrompt(suggestion)}
+                              className={cn(
+                                "whitespace-nowrap px-3 py-1.5 rounded-full text-[11px] font-bold transition-all active:scale-95 border cursor-pointer",
+                                theme === 'light'
+                                  ? "bg-neutral-50 border-neutral-200 text-neutral-600 hover:bg-neutral-100"
+                                  : "bg-neutral-800 border-neutral-700 text-neutral-400 hover:bg-neutral-700"
+                              )}
+                            >
+                              {suggestion}
+                            </button>
+                          ))}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
+                    {/* Streaming Status (Subtle Shimmer) */}
+                    <AnimatePresence>
+                      {isRevisionStreaming && (
+                        <motion.div 
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          className="flex items-center gap-2 mb-1 px-1"
+                        >
+                          <div className="relative inline-block overflow-hidden">
+                            <span className={cn(
+                              "text-[10px] font-black uppercase tracking-[0.2em] animate-pulse",
+                              theme === 'light' ? "text-indigo-600/60" : "text-indigo-400/60"
+                            )}>
+                              {draftDocument?.length ? "Rewriting selected sections..." : "Understanding document..."}
+                            </span>
+                            <motion.div 
+                              className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent -skew-x-12"
+                              initial={{ x: '-100%' }}
+                              animate={{ x: '200%' }}
+                              transition={{ repeat: Infinity, duration: 1.5, ease: "linear" }}
+                            />
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
+                    {/* Input Area matching ChatInterface */}
                     <div className="flex items-center gap-2">
-                      <button 
-                        onClick={() => {
-                          if (currentCheckpointIndex > 0) {
-                            const prevIdx = currentCheckpointIndex - 1;
-                            setCurrentCheckpointIndex(prevIdx);
-                            setActiveDocument(checkpoints[prevIdx]);
-                          }
-                        }}
-                        disabled={currentCheckpointIndex === 0}
+                      {/* Undo/Redo (Compact) */}
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button 
+                          onClick={() => {
+                            if (currentCheckpointIndex > 0) {
+                              const prevIdx = currentCheckpointIndex - 1;
+                              setCurrentCheckpointIndex(prevIdx);
+                              setActiveDocument(checkpoints[prevIdx]);
+                            }
+                          }}
+                          disabled={currentCheckpointIndex === 0 || isRevisionStreaming}
+                          className={cn(
+                            "p-2 rounded-xl transition-all active:scale-90 cursor-pointer",
+                            theme === 'light' ? "hover:bg-neutral-100 text-neutral-500" : "hover:bg-neutral-800 text-neutral-400",
+                            (currentCheckpointIndex === 0 || isRevisionStreaming) && "opacity-20 cursor-not-allowed"
+                          )}
+                          title="Undo"
+                        >
+                          <RotateCcw size={16} />
+                        </button>
+                        <button 
+                          onClick={() => {
+                            if (currentCheckpointIndex < checkpoints.length - 1) {
+                              const nextIdx = currentCheckpointIndex + 1;
+                              setCurrentCheckpointIndex(nextIdx);
+                              setActiveDocument(checkpoints[nextIdx]);
+                            }
+                          }}
+                          disabled={currentCheckpointIndex === checkpoints.length - 1 || isRevisionStreaming}
+                          className={cn(
+                            "p-2 rounded-xl transition-all active:scale-90 cursor-pointer",
+                            theme === 'light' ? "hover:bg-neutral-100 text-neutral-500" : "hover:bg-neutral-800 text-neutral-400",
+                            (currentCheckpointIndex === checkpoints.length - 1 || isRevisionStreaming) && "opacity-20 cursor-not-allowed"
+                          )}
+                          title="Redo"
+                        >
+                          <RotateCw size={16} />
+                        </button>
+                      </div>
+
+                      {/* Input Capsule */}
+                      <form 
+                        onSubmit={handleAskChanges} 
                         className={cn(
-                          "p-3 rounded-2xl transition-all active:scale-90 shrink-0 cursor-pointer",
-                          theme === 'light' ? "bg-neutral-100 text-neutral-600" : "bg-neutral-800 text-neutral-400",
-                          currentCheckpointIndex === 0 && "opacity-30 cursor-not-allowed"
+                          "flex-1 flex items-center gap-2 px-4 py-2 rounded-[24px] border transition-all duration-300 min-h-[48px] sm:min-h-[52px]",
+                          theme === 'light' 
+                            ? "bg-neutral-50 border-neutral-200 focus-within:border-indigo-500 focus-within:bg-white shadow-sm" 
+                            : "bg-neutral-800/50 border-neutral-700/50 focus-within:border-indigo-500/50 focus-within:bg-neutral-800 shadow-xl"
                         )}
-                        title="Undo"
                       >
-                        <RotateCcw size={18} />
-                      </button>
-                      <button 
-                        onClick={() => {
-                          if (currentCheckpointIndex < checkpoints.length - 1) {
-                            const nextIdx = currentCheckpointIndex + 1;
-                            setCurrentCheckpointIndex(nextIdx);
-                            setActiveDocument(checkpoints[nextIdx]);
-                          }
-                        }}
-                        disabled={currentCheckpointIndex === checkpoints.length - 1}
-                        className={cn(
-                          "p-3 rounded-2xl transition-all active:scale-90 shrink-0 cursor-pointer",
-                          theme === 'light' ? "bg-neutral-100 text-neutral-600" : "bg-neutral-800 text-neutral-400",
-                          currentCheckpointIndex === checkpoints.length - 1 && "opacity-30 cursor-not-allowed"
-                        )}
-                        title="Redo"
-                      >
-                        <RotateCw size={18} />
-                      </button>
-                      <form onSubmit={handleAskChanges} className="relative flex-1">
                         <input 
                           type="text" 
                           value={docChangePrompt} 
@@ -811,16 +951,36 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
                           placeholder="Ask changes..." 
                           disabled={isRevisionStreaming} 
                           className={cn(
-                            "w-full pl-6 sm:pl-8 pr-20 sm:pr-24 py-4 sm:py-5 rounded-2xl sm:rounded-[24px] border-2 text-[14px] sm:text-[16px] font-bold outline-none transition-all duration-500", 
-                            theme === 'light' ? "bg-neutral-50 border-neutral-100 focus:border-indigo-500 focus:bg-white text-neutral-900" : "bg-neutral-800 border-neutral-800 focus:border-indigo-500 focus:bg-neutral-900 text-white"
+                            "flex-1 bg-transparent border-none outline-none focus:ring-0 text-[14px] sm:text-[15px] font-bold py-1",
+                            theme === 'light' ? "text-neutral-900 placeholder-neutral-400" : "text-white placeholder-neutral-500"
                           )} 
                         />
-                        <div className="absolute right-2 sm:right-3 top-1/2 -translate-y-1/2">
+                        <div className="flex items-center shrink-0">
                           {isRevisionStreaming ? (
-                            <button type="button" onClick={handleStopStreaming} className="flex items-center gap-1 sm:gap-2 px-4 sm:px-6 py-2 sm:py-2.5 rounded-[14px] sm:rounded-[18px] bg-rose-600 text-white text-[10px] sm:text-[12px] font-black uppercase tracking-widest shadow-xl active:scale-90 transition-all cursor-pointer"><StopCircle size={14} /> Stop</button>
+                            <button 
+                              type="button" 
+                              onClick={handleStopStreaming} 
+                              className={cn(
+                                "flex items-center justify-center w-8 h-8 rounded-full shadow-lg active:scale-90 transition-all cursor-pointer",
+                                theme === 'light' ? "bg-neutral-950 text-white" : "bg-white text-neutral-950"
+                              )}
+                              title="Stop Generating"
+                            >
+                              <Square size={12} fill="currentColor" className="stroke-none" />
+                            </button>
                           ) : (
-                            <button type="submit" disabled={!docChangePrompt.trim()} className={cn("flex items-center gap-1 sm:gap-2 px-4 sm:px-6 py-2 sm:py-2.5 rounded-[14px] sm:rounded-[18px] text-[10px] sm:text-[12px] font-black uppercase tracking-widest transition-all cursor-pointer", docChangePrompt.trim() ? "bg-indigo-600 text-white hover:bg-indigo-700 shadow-xl active:scale-95" : "bg-neutral-200 dark:bg-neutral-800 text-neutral-400 cursor-not-allowed")}>
-                              <Send size={14} /> Send
+                            <button 
+                              type="submit" 
+                              disabled={!docChangePrompt.trim()} 
+                              className={cn(
+                                "flex items-center justify-center w-8 h-8 rounded-full shadow-sm transition-all active:scale-95 cursor-pointer",
+                                docChangePrompt.trim() 
+                                  ? "bg-indigo-600 text-white hover:bg-indigo-700" 
+                                  : "bg-neutral-200 dark:bg-neutral-700 text-neutral-400 cursor-not-allowed"
+                              )}
+                              title="Send changes"
+                            >
+                              <ArrowUp size={16} className="stroke-[2.5px]" />
                             </button>
                           )}
                         </div>
@@ -828,10 +988,14 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
                     </div>
                     
                     {validationState && !validationState.isValid && (
-                      <div className="px-4 sm:px-6 py-3 sm:py-4 bg-rose-500/5 border border-rose-500/10 rounded-[16px] sm:rounded-[20px] flex items-center gap-3 sm:gap-4 animate-in fade-in duration-500">
-                        <Info size={18} className="text-rose-500 shrink-0" />
-                        <span className="text-[12px] sm:text-[13px] font-bold text-rose-600/80">{validationState.message}</span>
-                      </div>
+                      <motion.div 
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        className="px-4 py-2 bg-rose-500/5 border border-rose-500/10 rounded-xl flex items-center gap-2"
+                      >
+                        <Info size={14} className="text-rose-500 shrink-0" />
+                        <span className="text-[11px] font-bold text-rose-600/80">{validationState.message}</span>
+                      </motion.div>
                     )}
                   </div>
                 </div>
