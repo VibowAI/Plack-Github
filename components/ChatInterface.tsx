@@ -2937,6 +2937,8 @@ export default function ChatInterface() {
           timestamp: new Date().toISOString(),
           concurrentCount: concurrentCountRef.current
         });
+        logger.logInfo(LogCategory.MODEL, `[MODEL START] Model: ${targetModel}`);
+
 
         try {
           const netStartTime = Date.now();
@@ -3412,26 +3414,38 @@ export default function ChatInterface() {
 
           logger.logError(LogCategory.ERROR, "Generation chunk error", error);
           
-          let nextModel: ModelName = 'E1';
+          const isRetryable = (status: number) => [429, 500, 502, 503, 504].includes(status);
+          
+          let nextModel: ModelName | null = null;
           if (targetModel === 'ED1.7') nextModel = 'ED1.1';
           else if (targetModel === 'ED1.1') nextModel = 'D1-Lite';
           else if (targetModel === 'D1-Lite') nextModel = 'E1';
-          
-          // Limit to exactly 1 retry (retryCount < 1) with exactly 1 second (1000ms) delay
-           if (autoSwitchModels && retryCount < 1 && targetModel !== 'E1') {
-             logger.logInfo(LogCategory.MODEL, `Auto-switching model due to failure`, { from: targetModel, to: nextModel });
+
+          const canRetry = nextModel && isRetryable(response?.status || initResponse?.status || 0);
+
+          if (canRetry) {
+             logger.logInfo(LogCategory.MODEL, `[MODEL FAILED] Code: ${response?.status || initResponse?.status || 'Unknown'}`);
+             logger.logInfo(LogCategory.MODEL, `[FALLBACK MODEL] Model: ${nextModel}`);
              setActiveModel(nextModel);
-             setErrorStatus(`Switching to backup model. Please wait...`);
+             setErrorStatus(`Switched to ${nextModel} after a temporary model error.`);
              await new Promise(r => setTimeout(r, 1000));
              await executeStream(nextModel, retryCount + 1);
+             logger.logInfo(LogCategory.MODEL, `[FALLBACK SUCCESS] Model: ${nextModel}`);
           } else {
-             logger.logError(LogCategory.ERROR, "Generation failed after retries", error);
-             setModelError({
-               failedModel: targetModel,
-               recommendedModel: targetModel === 'E1' ? null : nextModel,
-             });
-             updateMessagesAndStreaming(streamChatId, prev => prev.filter(m => m.id !== assistantMsgId), false);
+             const errorStatus = response?.status || initResponse?.status || 'Unknown';
+             logger.logError(LogCategory.ERROR, `[FINAL FAILURE] Code: ${errorStatus}`, error);
+             
+             // Final Failure: Add assistant error message
+             const errorMessage: Message = {
+                id: `assistant-${crypto.randomUUID()}`,
+                chat_id: streamChatId || undefined,
+                role: 'model',
+                content: `⚠️ Error ${errorStatus}\n\n${errorStatus === 429 ? "AI service is busy." : "Temporary server error."}`,
+                isStreaming: false
+             };
+             updateMessagesAndStreaming(streamChatId, prev => [...prev.filter(m => m.id !== assistantMsgId), errorMessage], false);
           }
+
         } finally {
           // Monitor end logging
           const requestDuration = Date.now() - requestStartTime;
