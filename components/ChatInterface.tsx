@@ -388,6 +388,32 @@ export default function ChatInterface() {
   const [isSourcesSidebarOpen, setIsSourcesSidebarOpen] = useState(false);
   const [activeDocumentEditorId, setActiveDocumentEditorId] = useState<string | null>(null);
   const [isLiveModeOpen, setIsLiveModeOpen] = useState(false);
+  const isLiveModeOpenRef = useRef(false);
+  const [liveSessionId, setLiveSessionId] = useState<string | null>(null);
+  const [liveSessionChatId, setLiveSessionChatId] = useState<string | null>(null);
+  const liveSessionChatIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    liveSessionChatIdRef.current = liveSessionChatId;
+  }, [liveSessionChatId]);
+
+  useEffect(() => {
+    isLiveModeOpenRef.current = isLiveModeOpen;
+    if (isLiveModeOpen) {
+      console.log("[LIVE SESSION START]");
+      setLiveSessionId(crypto.randomUUID());
+      // If we are already in a chat, use it for the live session
+      if (activeChatIdRef.current && activeChatIdRef.current !== 'temporary') {
+        setLiveSessionChatId(activeChatIdRef.current);
+        console.log(`Chat ID: ${activeChatIdRef.current}`);
+      }
+    } else {
+      if (liveSessionChatIdRef.current) {
+        console.log("[LIVE SESSION END]");
+      }
+      setLiveSessionId(null);
+      setLiveSessionChatId(null);
+    }
+  }, [isLiveModeOpen]);
 
   // Core Refs
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -2186,7 +2212,7 @@ export default function ChatInterface() {
   const handleSaveLiveUserMessage = async (userText: string): Promise<string | null> => {
     const uId = session?.user?.id;
     if (!uId && !isTemporaryChat) return null;
-    let targetChatId = activeChatIdRef.current;
+    let targetChatId = liveSessionChatIdRef.current || activeChatIdRef.current;
 
     try {
       let userMsgFormatted: Message;
@@ -2202,19 +2228,31 @@ export default function ChatInterface() {
       } else {
         // Create new chat if not exists
         if (!targetChatId) {
+          if (isLiveModeOpenRef.current && liveSessionChatIdRef.current) {
+            console.log("[ERROR] Unexpected createChat() during Live session.");
+          }
           const initialTitle = userText.length > 30 ? userText.substring(0, 30) + "..." : userText;
           const newChat = await createChat(uId!, initialTitle || "Voice Conversation");
           setChats(prev => [newChat, ...prev]);
           targetChatId = newChat.id;
           setActiveChatId(newChat.id);
           activeChatIdRef.current = newChat.id;
+          setLiveSessionChatId(newChat.id);
+          console.log(`Chat ID: ${newChat.id}`);
 
           const slug = generateSlug(initialTitle || 'Voice Conversation', newChat.id);
           window.history.replaceState(null, '', `/chat/${slug}`);
+        } else if (!liveSessionChatIdRef.current) {
+          // If we found a targetChatId from activeChatIdRef, set it as liveSessionChatId
+          setLiveSessionChatId(targetChatId);
+          console.log(`Chat ID: ${targetChatId}`);
         }
 
         const chatIdStr = targetChatId!;
+        console.log("[LIVE USER MESSAGE]");
         const userMsg = await saveMessage(chatIdStr, 'user', userText);
+        console.log(`Message ID: ${userMsg.id}`);
+        
         userMsgFormatted = {
           id: userMsg.id.toString(),
           role: 'user',
@@ -2224,7 +2262,8 @@ export default function ChatInterface() {
       }
 
       setMessages(prev => [...prev, userMsgFormatted]);
-      console.log("[LIVE USER MESSAGE SAVED]", userText);
+      console.log("[LIVE APPEND]");
+      console.log(`Chat ID: ${targetChatId}`);
 
       // Trigger smart title generation check if it wasn't generated yet and not temporary
       if (!isTemporaryChat && targetChatId) {
@@ -2244,7 +2283,7 @@ export default function ChatInterface() {
   const handleSaveLiveAssistantMessage = async (assistantText: string): Promise<string | null> => {
     const uId = session?.user?.id;
     if (!uId && !isTemporaryChat) return null;
-    let targetChatId = activeChatIdRef.current;
+    let targetChatId = liveSessionChatIdRef.current || activeChatIdRef.current;
 
     try {
       let modelMsgFormatted: Message;
@@ -2259,20 +2298,31 @@ export default function ChatInterface() {
         };
       } else {
         if (!targetChatId) {
-          // If no active chat, fallback (should not happen normally)
+          if (isLiveModeOpenRef.current && liveSessionChatIdRef.current) {
+            console.log("[ERROR] Unexpected createChat() during Live session.");
+          }
+          // If no active chat, fallback (should not happen normally in Live session if User message was already saved)
           const initialTitle = "Voice Conversation";
           const newChat = await createChat(uId!, initialTitle);
           setChats(prev => [newChat, ...prev]);
           targetChatId = newChat.id;
           setActiveChatId(newChat.id);
           activeChatIdRef.current = newChat.id;
+          setLiveSessionChatId(newChat.id);
+          console.log(`Chat ID: ${newChat.id}`);
 
           const slug = generateSlug(initialTitle, newChat.id);
           window.history.replaceState(null, '', `/chat/${slug}`);
+        } else if (!liveSessionChatIdRef.current) {
+          setLiveSessionChatId(targetChatId);
+          console.log(`Chat ID: ${targetChatId}`);
         }
 
         const chatIdStr = targetChatId!;
+        console.log("[LIVE AI RESPONSE]");
         const modelMsg = await saveMessage(chatIdStr, 'model', assistantText);
+        console.log(`Message ID: ${modelMsg.id}`);
+
         modelMsgFormatted = {
           id: modelMsg.id.toString(),
           role: 'model',
@@ -2282,7 +2332,8 @@ export default function ChatInterface() {
       }
 
       setMessages(prev => [...prev, modelMsgFormatted]);
-      console.log("[LIVE AI RESPONSE SAVED]", assistantText);
+      console.log("[LIVE APPEND]");
+      console.log(`Chat ID: ${targetChatId}`);
 
       return targetChatId;
     } catch (err) {
@@ -2294,19 +2345,28 @@ export default function ChatInterface() {
   const handleSaveLiveMessages = async (userText: string, assistantText: string): Promise<string | null> => {
     if (!session?.user?.id) return null;
     const uId = session.user.id;
-    let targetChatId = activeChatId;
+    let targetChatId = liveSessionChatIdRef.current || activeChatIdRef.current;
 
     try {
       // 1. Create a new chat if there isn't an active one
       if (!targetChatId) {
+        if (isLiveModeOpenRef.current && liveSessionChatIdRef.current) {
+          console.log("[ERROR] Unexpected createChat() during Live session.");
+        }
         const initialTitle = userText.length > 30 ? userText.substring(0, 30) + "..." : userText;
         const newChat = await createChat(uId, initialTitle || "Voice Conversation");
         setChats(prev => [newChat, ...prev]);
         targetChatId = newChat.id;
         setActiveChatId(newChat.id);
+        activeChatIdRef.current = newChat.id;
+        setLiveSessionChatId(newChat.id);
+        console.log(`Chat ID: ${newChat.id}`);
 
         const slug = generateSlug(initialTitle || 'Voice Conversation', newChat.id);
         window.history.replaceState(null, '', `/chat/${slug}`);
+      } else if (!liveSessionChatIdRef.current) {
+        setLiveSessionChatId(targetChatId);
+        console.log(`Chat ID: ${targetChatId}`);
       }
 
       if (!targetChatId) {
@@ -2316,7 +2376,10 @@ export default function ChatInterface() {
       const chatIdStr: string = targetChatId;
 
       // 2. Save User Message
+      console.log("[LIVE USER MESSAGE]");
       const userMsg = await saveMessage(chatIdStr, 'user', userText);
+      console.log(`Message ID: ${userMsg.id}`);
+
       const userMsgFormatted: Message = {
         id: userMsg.id.toString(),
         role: 'user',
@@ -2327,7 +2390,10 @@ export default function ChatInterface() {
       // 3. Save Assistant Message (if present)
       let modelMsgFormatted: Message | null = null;
       if (assistantText.trim()) {
+        console.log("[LIVE AI RESPONSE]");
         const modelMsg = await saveMessage(chatIdStr, 'model', assistantText);
+        console.log(`Message ID: ${modelMsg.id}`);
+
         modelMsgFormatted = {
           id: modelMsg.id.toString(),
           role: 'model',
@@ -2342,6 +2408,8 @@ export default function ChatInterface() {
         if (modelMsgFormatted) list.push(modelMsgFormatted);
         return list;
       });
+      console.log("[LIVE APPEND]");
+      console.log(`Chat ID: ${chatIdStr}`);
 
       // 5. Trigger smart title generation check if it wasn't generated yet
       const currentChat = chats.find(c => c.id === chatIdStr);
@@ -2349,7 +2417,6 @@ export default function ChatInterface() {
         executeTitleGeneration(chatIdStr, userText);
       }
 
-      console.log("[MESSAGE SAVED] Saved live turn matching activeChatId:", chatIdStr);
       return chatIdStr;
     } catch (err) {
       console.error("Failed persisting live messages:", err);
@@ -2510,6 +2577,9 @@ export default function ChatInterface() {
       if (!currentChatId && !isTemporaryChat) {
         bgChatPromise = (async () => {
           try {
+            if (isLiveModeOpenRef.current && liveSessionChatIdRef.current) {
+              console.log("[ERROR] Unexpected createChat() during Live session.");
+            }
             const initialTitle = "New Conversation";
             const newChat = await createChat(userId, initialTitle);
             newChat.title_generated = false;
