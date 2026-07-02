@@ -82,6 +82,43 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
 
   const [mounted, setMounted] = useState(false);
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [isRetrying, setIsRetrying] = useState(false);
+
+  const fetchDocumentWithRetry = async () => {
+    if (!docIdProp) return;
+    setLoadError(null);
+    setIsRetrying(true);
+    console.log("[DOCUMENT FOUND] Attempting to load document content for ID:", docIdProp);
+    try {
+      const doc = await getDocumentById(docIdProp);
+      if (doc) {
+        setActiveDocument(doc.content);
+        setEditedTitle(doc.title);
+        console.log("[DOCUMENT CONTENT LOADED] Document content loaded successfully via fetch/retry. Length:", doc.content?.length);
+      } else {
+        throw new Error("Document not found in database.");
+      }
+    } catch (e: any) {
+      console.error("[EDITOR RENDER FAILED] Failed to fetch document content:", e);
+      setLoadError(e?.message || "Database connection error");
+    } finally {
+      setIsRetrying(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isEditing && !activeDocument && activeDocument !== "") {
+      if (docIdProp) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        fetchDocumentWithRetry();
+      } else {
+        setActiveDocument("");
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEditing, activeDocument, docIdProp]);
+
   // Device detection & Mount diagnostics
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -123,17 +160,49 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
   // Derive actual doc ID
   const actualDocId = docIdProp || internalDocId;
 
+  // Diagnostics for sub-components mounting
+  const headerMountedRef = useRef(false);
+  const composerMountedRef = useRef(false);
+  const bodyEditorMountedRef = useRef(false);
+
+  useEffect(() => {
+    if (isEditing) {
+      if (!headerMountedRef.current) {
+        console.log("[TOOLBAR MOUNTED] Header/Toolbar component mounted successfully. Component: InlineDocumentBlock (Header)");
+        headerMountedRef.current = true;
+      }
+      if (!composerMountedRef.current) {
+        console.log("[ASK CHANGES COMPOSER MOUNTED] Ask Changes composer mounted successfully. Component: InlineDocumentBlock (Form)");
+        composerMountedRef.current = true;
+      }
+      if (editorRef.current && !bodyEditorMountedRef.current) {
+        console.log("[BODY EDITOR MOUNTED] Body editor textarea mounted successfully. Component: InlineDocumentBlock (textarea)");
+        bodyEditorMountedRef.current = true;
+      }
+    } else {
+      headerMountedRef.current = false;
+      composerMountedRef.current = false;
+      bodyEditorMountedRef.current = false;
+    }
+  }, [isEditing]);
+
   // Editor specific session logs
   useEffect(() => {
     if (isEditing) {
+      console.log("[EDITOR COMPONENT MOUNTED] Fullscreen editor portal mounted. Document ID:", actualDocId);
+      console.log("[FULLSCREEN OVERLAY OPEN] Fullscreen overlay is open.");
+      console.log("[EDITOR READY] Fullscreen editor ready for interaction.");
       console.log("[EDITOR OPEN]", { docIdProp, actualDocId, title: editedTitle });
       console.log("[EDITOR DOCUMENT LOADED]", { docIdProp, actualDocId });
       console.log("[EDITOR CONTENT LENGTH]", activeDocument?.length || 0);
-      console.log("[EDITOR READY]", { docIdProp, actualDocId });
       
       if (!activeDocument && activeDocument !== "") {
         console.error("[EDITOR RENDER FAILED] activeDocument is missing or undefined", { docIdProp, actualDocId });
       }
+
+      return () => {
+        console.log("[FULLSCREEN OVERLAY CLOSED] Fullscreen overlay is closed.");
+      };
     }
   }, [isEditing, actualDocId, activeDocument, docIdProp, editedTitle]);
 
@@ -398,7 +467,18 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
     <>
       {/* INLINE PREVIEW (Always visible in chat flow) */}
       <div 
-        onClick={() => { if (isMobile) setIsEditing(true); }}
+        onClick={() => { 
+          if (isMobile) {
+            console.log("[MOBILE EDIT CLICK] Inline document block clicked on mobile device.");
+            if (activeDocument !== undefined && activeDocument !== null) {
+              console.log("[DOCUMENT FOUND] Document exists with ID:", actualDocId);
+              console.log("[DOCUMENT CONTENT LOADED] Document content loaded successfully. Length:", activeDocument.length);
+            } else {
+              console.error("[EDITOR RENDER FAILED] Document content is undefined or null on tap inside InlineDocumentBlock.");
+            }
+            setIsEditing(true); 
+          }
+        }}
         className={cn(
           "flex flex-col border transition-all duration-300 w-full relative select-text rounded-2xl shadow-sm my-4 overflow-hidden",
           theme === 'light' ? "bg-white border-neutral-200" : "bg-neutral-900 border-neutral-800/80",
@@ -428,7 +508,16 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
               <span className="text-[11px] font-bold">Copy</span>
             </button>
             <button
-              onClick={() => setIsEditing(true)}
+              onClick={() => {
+                console.log("[MOBILE EDIT CLICK] Edit button pressed. Doc ID:", actualDocId, "Title:", editedTitle);
+                if (activeDocument !== undefined && activeDocument !== null) {
+                  console.log("[DOCUMENT FOUND] Document exists with ID:", actualDocId);
+                  console.log("[DOCUMENT CONTENT LOADED] Document content loaded successfully. Length:", activeDocument.length);
+                } else {
+                  console.error("[EDITOR RENDER FAILED] Document content is undefined or null inside InlineDocumentBlock.");
+                }
+                setIsEditing(true);
+              }}
               className={cn(
                 "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer",
                 theme === 'light' 
@@ -457,7 +546,7 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 onClick={handleStopEditing}
-                className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[90]"
+                className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[99998]"
               />
             )}
             
@@ -467,9 +556,9 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
               exit={isMobile ? { y: '100%' } : { x: '100%' }}
               transition={{ type: 'spring', damping: 25, stiffness: 200 }}
               className={cn(
-                "flex flex-col select-text fixed overflow-hidden z-[100]",
+                "flex flex-col select-text fixed overflow-hidden",
                 isMobile 
-                  ? "inset-0 border-none shadow-2xl" 
+                  ? "border-none shadow-2xl bg-white dark:bg-neutral-950" 
                   : "right-0 top-0 bottom-0 border-l z-40 shadow-none rounded-none",
                 theme === 'light' 
                   ? "bg-white border-neutral-200" 
@@ -478,9 +567,14 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
                       : "bg-neutral-950 border-neutral-800")
               )}
               style={isMobile ? {
+                position: 'fixed',
+                inset: 0,
+                width: '100vw',
+                height: '100dvh',
+                zIndex: 99999,
+                overflow: 'hidden',
                 paddingTop: 'env(safe-area-inset-top)',
-                paddingBottom: 'env(safe-area-inset-bottom)',
-                height: '100dvh'
+                paddingBottom: 'env(safe-area-inset-bottom)'
               } : { width: width || 380, minWidth: 320, maxWidth: 420 }}
             >
               {/* Header with Save Status */}
@@ -570,10 +664,25 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
                 className="flex-1 overflow-y-auto px-6 sm:px-12 py-8 sm:py-12 scroll-smooth select-text relative"
               >
                 <div className="max-w-[800px] mx-auto">
-                  {!activeDocument && activeDocument !== "" ? (
+                  {!activeDocument && activeDocument !== "" && !loadError ? (
                     <div className="flex flex-col items-center justify-center py-20 gap-3">
                       <Sparkles className="animate-spin text-indigo-500" size={32} />
-                      <span className="text-sm opacity-50">Loading document content...</span>
+                      <span className="text-sm opacity-50">Loading document...</span>
+                    </div>
+                  ) : loadError ? (
+                    <div className="flex flex-col items-center justify-center py-20 gap-4 text-center px-4">
+                      <div className="p-3 bg-rose-500/10 text-rose-500 rounded-full">
+                        <Info size={32} />
+                      </div>
+                      <h3 className="text-lg font-bold">Unable to load document</h3>
+                      <p className="text-sm opacity-60 max-w-xs">{loadError}</p>
+                      <button 
+                        onClick={fetchDocumentWithRetry}
+                        disabled={isRetrying}
+                        className="px-6 py-2.5 rounded-xl bg-indigo-600 text-white font-bold text-sm hover:bg-indigo-700 active:scale-95 transition-all shadow-md disabled:opacity-50"
+                      >
+                        {isRetrying ? "Retrying..." : "Retry"}
+                      </button>
                     </div>
                   ) : (
                     <div className="space-y-6 sm:space-y-8 pb-32">

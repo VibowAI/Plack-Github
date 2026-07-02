@@ -959,14 +959,16 @@ export default function ChatInterface() {
   }, [activeModel, session?.user?.id]);
 
   // Restore model from Supabase metadata on session load
+  const modelRestoredRef = useRef(false);
   useEffect(() => {
-    if (session?.user?.user_metadata?.preferred_model) {
+    if (session?.user?.user_metadata?.preferred_model && !modelRestoredRef.current) {
       const savedModel = session.user.user_metadata.preferred_model as ModelName;
-      if (['E1', 'ED1.1', 'ED1.7', 'D1-Lite'].includes(savedModel) && savedModel !== activeModel) {
+      if (['E1', 'ED1.1', 'ED1.7', 'D1-Lite'].includes(savedModel)) {
         setActiveModel(savedModel);
+        modelRestoredRef.current = true;
       }
     }
-  }, [session?.user?.id, activeModel, session?.user?.user_metadata?.preferred_model]);
+  }, [session?.user?.id, session?.user?.user_metadata?.preferred_model]);
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
   const [isAttachmentMenuOpen, setIsAttachmentMenuOpen] = useState(false);
   const [isMentionMenuOpen, setIsMentionMenuOpen] = useState(false);
@@ -1048,7 +1050,6 @@ export default function ChatInterface() {
           storagePath: a.storagePath,
           uploadFailed: a.uploadFailed
         });
-        // Only restore attachments if they differ significantly to avoid loops
         const currentAttachmentsClean = attachments.map(cleanAttachment);
         if (parsed.attachments !== undefined && JSON.stringify(parsed.attachments) !== JSON.stringify(currentAttachmentsClean)) {
           setAttachments(parsed.attachments);
@@ -1071,10 +1072,15 @@ export default function ChatInterface() {
         logger.logError(LogCategory.CHAT, "Failed to parse draft", e);
       }
     } else {
-      setInputValue('');
-      setAttachments([]);
+      if (inputValue !== '') {
+        setInputValue('');
+      }
+      if (attachments.length > 0) {
+        setAttachments([]);
+      }
     }
-  }, [activeChatId, isTemporaryChat, setAttachments, setInputValue, attachments, activeModel, inputValue]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeChatId, isTemporaryChat]);
 
   useEffect(() => {
     const handleImmediateSave = () => {
@@ -1851,6 +1857,7 @@ export default function ChatInterface() {
 
   const handleStopStreaming = (chatId?: string) => {
     const targetChatId = chatId || activeChatId || 'temporary';
+    logger.logInfo(LogCategory.CHAT, `Stopping stream and releasing locks for ${targetChatId}`);
     if (targetChatId) {
       const controller = abortControllersRef.current[targetChatId];
       if (controller) {
@@ -1868,6 +1875,10 @@ export default function ChatInterface() {
           }
         };
       });
+      // Explicitly release concurrency locks instantly to prevent deadlock
+      activeRequestsRef.current[targetChatId] = false;
+      activeRequestsRef.current["new-chat"] = false;
+
       if (targetChatId === activeChatId || targetChatId === 'temporary') {
         setIsStreaming(false);
       }
@@ -1876,6 +1887,7 @@ export default function ChatInterface() {
         abortControllerRef.current.abort();
         abortControllerRef.current = null;
       }
+      activeRequestsRef.current["new-chat"] = false;
       setIsStreaming(false);
     }
   };
@@ -4306,10 +4318,7 @@ export default function ChatInterface() {
 
       {/* Main Container Wrapper - Handles layout alignment dynamic shifting */}
       <div 
-        className={cn(
-          "flex-1 flex flex-col min-h-screen transition-all duration-300 ease-out",
-          isMobile && activeDocumentEditorId ? "hidden invisible opacity-0 pointer-events-none w-0 h-0 overflow-hidden" : ""
-        )}
+        className="flex-1 flex flex-col min-h-screen transition-all duration-300 ease-out"
         style={{
           paddingLeft: isSidebarOpen && !isMobile ? `${sidebarWidth}px` : '0px',
           paddingRight: (isSourcesSidebarOpen || activeDocumentEditorId) && !isMobile ? `${sourcesWidth}px` : '0px'
