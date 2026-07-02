@@ -220,16 +220,23 @@ export async function saveMessage(chatId: string, role: string, content: string,
   return data;
 }
 
-export async function updateMessage(messageId: string, content: string, reasoning?: string) {
+export async function updateMessage(messageId: string, content: string, reasoning?: string, metadata?: any) {
   const supabase = createClient();
   logger.logGroup(LogCategory.DATABASE, "OPERATION: update message", { messageId, contentLength: content.length });
+  
+  const updatePayload: any = {
+    content,
+    reasoning,
+    updated_at: new Date().toISOString()
+  };
+
+  if (metadata) {
+    updatePayload.metadata = metadata;
+  }
+
   const { data, error } = await supabase
     .from('messages')
-    .update({
-      content,
-      reasoning,
-      updated_at: new Date().toISOString()
-    })
+    .update(updatePayload)
     .eq('id', messageId)
     .select()
     .single();

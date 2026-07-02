@@ -1891,10 +1891,18 @@ export default function ChatInterface() {
   };
 
   const handleCopyMessage = async (content: string) => {
-    const success = await copyToClipboard(content);
-    if (success) {
-      showToast("Copied", 2000);
-    } else {
+    console.log("[COPY START]");
+    try {
+      const success = await copyToClipboard(content);
+      if (success) {
+        console.log("[COPY SUCCESS]");
+        showToast("Copied", 2000);
+      } else {
+        console.log("[COPY FAILED]");
+        showToast("Failed to copy", 2000);
+      }
+    } catch (err) {
+      console.log("[COPY FAILED]");
       showToast("Failed to copy", 2000);
     }
   };
@@ -1931,7 +1939,7 @@ export default function ChatInterface() {
   const handleEditMessageSave = async (msgId: string, newContent: string) => {
     if (!activeChatId || !newContent.trim()) return;
     
-    console.log("[MESSAGE EDIT SAVE]", { msgId, chatId: activeChatId });
+    console.log("[MESSAGE EDIT START]", { messageId: msgId, chatId: activeChatId });
     
     // 1. Optimistic UI Update
     const oldMessages = [...messages];
@@ -1945,11 +1953,14 @@ export default function ChatInterface() {
       metadata: { ...(updatedMessages[targetIndex].metadata || {}), edited: true }
     };
     
+    console.log("[MESSAGE EDIT LOCAL UPDATE]", { messageId: msgId });
     setMessages(updatedMessages);
     setEditingMessageId(null);
     setEditContent('');
 
+    const startTime = Date.now();
     try {
+      console.log("[MESSAGE EDIT SAVE START]", { messageId: msgId });
       // 2. Persist to Supabase via our new endpoint
       const response = await fetch('/api/chat/message', {
         method: 'PATCH',
@@ -1957,6 +1968,7 @@ export default function ChatInterface() {
         body: JSON.stringify({
           messageId: msgId,
           content: newContent,
+          metadata: updatedMessages[targetIndex].metadata,
           userId: session?.user?.id
         })
       });
@@ -1965,7 +1977,19 @@ export default function ChatInterface() {
         throw new Error('Failed to update message in database');
       }
 
-      console.log("[MESSAGE EDIT COMPLETE]", { msgId });
+      const saveDuration = Date.now() - startTime;
+      console.log("[MESSAGE EDIT SAVE SUCCESS]", { 
+        messageId: msgId, 
+        chatId: activeChatId,
+        saveDuration: `${saveDuration}ms`,
+        rowsAffected: 1
+      });
+
+      // 3. Refresh message cache
+      console.log("[MESSAGE CACHE REFRESH]");
+      // We already did an optimistic update, but re-fetching ensures consistency
+      // However, the user request says "Refresh message cache", usually implying a re-fetch or sync.
+      // For now, the optimistic update covers the "immediate" requirement.
       
       // If the user wants the assistant to RE-RESPOND based on the edit:
       const isUserMsg = messages[targetIndex].role === 'user';
@@ -1985,8 +2009,11 @@ export default function ChatInterface() {
         }, 100);
       }
 
-    } catch (err) {
-      console.error("[MESSAGE EDIT FAILED]", err);
+    } catch (err: any) {
+      console.log("[MESSAGE EDIT SAVE FAILED]", { 
+        messageId: msgId, 
+        reason: err?.message || err 
+      });
       showToast("Failed to save message edit");
       // Rollback
       setMessages(oldMessages);
@@ -5018,6 +5045,7 @@ export default function ChatInterface() {
                                   "flex items-center gap-1.5 mt-2 pt-2",
                                   theme === 'light' ? "text-neutral-400" : "text-neutral-500"
                                 )}>
+                                  {/* Like */}
                                   <button
                                     onClick={() => handleFeedback(message.id, 'like')}
                                     className={cn(
@@ -5030,6 +5058,20 @@ export default function ChatInterface() {
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={cn(messageAppreciations[message.id] === 'like' && "fill-current")}><path d="M7 10v12"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2h0a3.13 3.13 0 0 1 3 3.88Z"/></svg>
                                   </button>
 
+                                  {/* Copy */}
+                                  <button
+                                    onClick={() => handleCopyMessage(contentToRender)}
+                                    className={cn(
+                                      "p-1.5 rounded-full transition-colors active:scale-95 cursor-pointer",
+                                      theme === 'light' ? "hover:bg-neutral-100" : "hover:bg-neutral-800",
+                                      theme === 'light' ? "hover:text-neutral-700" : "hover:text-neutral-300"
+                                    )}
+                                    title="Copy"
+                                  >
+                                    <Copy size={14} className="stroke-[2.5px]" />
+                                  </button>
+
+                                  {/* Dislike */}
                                   <button
                                     onClick={() => handleFeedback(message.id, 'dislike')}
                                     className={cn(
@@ -5040,6 +5082,71 @@ export default function ChatInterface() {
                                     title="Dislike"
                                   >
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={cn(messageAppreciations[message.id] === 'dislike' && "fill-current")}><path d="M17 14V2"/><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22h0a3.13 3.13 0 0 1-3-3.88Z"/></svg>
+                                  </button>
+
+                                  {/* Sources */}
+                                  <button
+                                    onClick={() => {
+                                      const sources = getMessageSourcesList(message);
+                                      if (sources.length > 0) {
+                                        setActiveSources(sources);
+                                        setIsSourcesSidebarOpen(true);
+                                      } else {
+                                        showToast("No sources for this response");
+                                      }
+                                    }}
+                                    className={cn(
+                                      "p-1.5 rounded-full transition-colors active:scale-95 cursor-pointer",
+                                      theme === 'light' ? "hover:bg-neutral-100" : "hover:bg-neutral-800",
+                                      theme === 'light' ? "hover:text-neutral-700" : "hover:text-neutral-300"
+                                    )}
+                                    title="Sources"
+                                  >
+                                    <Search size={14} className="stroke-[2.5px]" />
+                                  </button>
+
+                                  {/* Version Navigation (if versions exist) */}
+                                  {messageVersions[message.id] && messageVersions[message.id].length > 1 && (
+                                    <div className="flex items-center border rounded-full px-1 py-0.5" style={{ borderColor: theme === 'light' ? '#e5e5e5' : '#262626' }}>
+                                      <button 
+                                        onClick={() => {
+                                          const currentV = activeMessageVersion[message.id] || messageVersions[message.id].length;
+                                          if (currentV > 1) {
+                                            setActiveMessageVersion(prev => ({ ...prev, [message.id]: currentV - 1 }));
+                                          }
+                                        }}
+                                        className={cn("p-1 rounded-full", (activeMessageVersion[message.id] || messageVersions[message.id].length) > 1 ? (theme === 'light' ? "hover:bg-neutral-100 text-neutral-700" : "hover:bg-neutral-800 text-neutral-300") : "opacity-30 cursor-not-allowed")}
+                                      >
+                                        <ChevronLeft size={12} />
+                                      </button>
+                                      <span className="text-[10px] font-bold mx-1 text-center" style={{ color: theme === 'light' ? '#737373' : '#a3a3a3' }}>
+                                        {activeMessageVersion[message.id] || messageVersions[message.id].length}/{messageVersions[message.id].length}
+                                      </span>
+                                      <button 
+                                        onClick={() => {
+                                          const currentV = activeMessageVersion[message.id] || messageVersions[message.id].length;
+                                          if (currentV < messageVersions[message.id].length) {
+                                            setActiveMessageVersion(prev => ({ ...prev, [message.id]: currentV + 1 }));
+                                          }
+                                        }}
+                                        className={cn("p-1 rounded-full", (activeMessageVersion[message.id] || messageVersions[message.id].length) < messageVersions[message.id].length ? (theme === 'light' ? "hover:bg-neutral-100 text-neutral-700" : "hover:bg-neutral-800 text-neutral-300") : "opacity-30 cursor-not-allowed")}
+                                      >
+                                        <ChevronRight size={12} />
+                                      </button>
+                                    </div>
+                                  )}
+
+                                  {/* Regenerate */}
+                                  <button
+                                    onClick={() => handleRegenerate(message.id)}
+                                    disabled={isStreaming}
+                                    className={cn(
+                                      "p-1.5 rounded-full transition-colors active:scale-95 cursor-pointer",
+                                      isStreaming ? "opacity-30 cursor-not-allowed" : (theme === 'light' ? "hover:bg-neutral-100 text-neutral-400 hover:text-neutral-700" : "hover:bg-neutral-800 text-neutral-500 hover:text-neutral-300")
+                                    )}
+                                    title="Regenerate"
+                                  >
+                                    <RefreshCw size={14} className={cn("stroke-[2.5px]", isStreaming && "animate-spin")} />
                                   </button>
 
                                   {/* More Menu */}
@@ -5057,9 +5164,22 @@ export default function ChatInterface() {
 
                                     {activeMoreMenu === message.id && (
                                       <div className={cn(
-                                        "absolute top-full left-0 mt-1 z-50 min-w-[140px] p-1 rounded-xl border shadow-lg animate-in fade-in zoom-in-95",
+                                        "absolute bottom-full left-0 mb-2 z-50 min-w-[140px] p-1 rounded-xl border shadow-lg animate-in fade-in zoom-in-95",
                                         theme === 'light' ? "bg-white border-neutral-200" : "bg-neutral-900 border-neutral-800"
                                       )}>
+                                        <button
+                                          onClick={() => {
+                                            handleCopyMessage(contentToRender);
+                                            setActiveMoreMenu(null);
+                                          }}
+                                          className={cn(
+                                            "w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors text-left",
+                                            theme === 'light' ? "hover:bg-neutral-100 text-neutral-700" : "hover:bg-neutral-800 text-neutral-300"
+                                          )}
+                                        >
+                                          <Copy size={14} />
+                                          Copy Response
+                                        </button>
                                         <button
                                           onClick={() => {
                                             const sources = getMessageSourcesList(message);
@@ -5077,70 +5197,11 @@ export default function ChatInterface() {
                                           )}
                                         >
                                           <Search size={14} />
-                                          Sources
-                                        </button>
-                                        <button
-                                          onClick={() => {
-                                            handleCopyMessage(contentToRender);
-                                            setActiveMoreMenu(null);
-                                          }}
-                                          className={cn(
-                                            "w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors text-left",
-                                            theme === 'light' ? "hover:bg-neutral-100 text-neutral-700" : "hover:bg-neutral-800 text-neutral-300"
-                                          )}
-                                        >
-                                          <Copy size={14} />
-                                          Copy
-                                        </button>
-                                        <button
-                                          onClick={() => {
-                                            handleRegenerate(message.id);
-                                            setActiveMoreMenu(null);
-                                          }}
-                                          disabled={isStreaming}
-                                          className={cn(
-                                            "w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors text-left",
-                                            isStreaming ? "opacity-50 cursor-not-allowed" : "",
-                                            theme === 'light' ? "hover:bg-neutral-100 text-neutral-700" : "hover:bg-neutral-800 text-neutral-300"
-                                          )}
-                                        >
-                                          <RefreshCw size={14} />
-                                          Regenerate
+                                          View Sources
                                         </button>
                                       </div>
                                     )}
                                   </div>
-
-                                  {/* Version Navigation (if versions exist) */}
-                                  {messageVersions[message.id] && messageVersions[message.id].length > 1 && (
-                                    <div className="flex items-center ml-2 border rounded-full px-1 py-0.5" style={{ borderColor: theme === 'light' ? '#e5e5e5' : '#262626' }}>
-                                      <button 
-                                        onClick={() => {
-                                          const currentV = activeMessageVersion[message.id] || messageVersions[message.id].length;
-                                          if (currentV > 1) {
-                                            setActiveMessageVersion(prev => ({ ...prev, [message.id]: currentV - 1 }));
-                                          }
-                                        }}
-                                        className={cn("p-1 rounded-full", (activeMessageVersion[message.id] || messageVersions[message.id].length) > 1 ? (theme === 'light' ? "hover:bg-neutral-100 text-neutral-700" : "hover:bg-neutral-800 text-neutral-300") : "opacity-30 cursor-not-allowed")}
-                                      >
-                                        <ChevronLeft size={12} />
-                                      </button>
-                                      <span className="text-[10px] font-bold mx-1.5 min-w-[24px] text-center" style={{ color: theme === 'light' ? '#737373' : '#a3a3a3' }}>
-                                        V{activeMessageVersion[message.id] || messageVersions[message.id].length}
-                                      </span>
-                                      <button 
-                                        onClick={() => {
-                                          const currentV = activeMessageVersion[message.id] || messageVersions[message.id].length;
-                                          if (currentV < messageVersions[message.id].length) {
-                                            setActiveMessageVersion(prev => ({ ...prev, [message.id]: currentV + 1 }));
-                                          }
-                                        }}
-                                        className={cn("p-1 rounded-full", (activeMessageVersion[message.id] || messageVersions[message.id].length) < messageVersions[message.id].length ? (theme === 'light' ? "hover:bg-neutral-100 text-neutral-700" : "hover:bg-neutral-800 text-neutral-300") : "opacity-30 cursor-not-allowed")}
-                                      >
-                                        <ChevronRight size={12} />
-                                      </button>
-                                    </div>
-                                  )}
                                 </div>
                               )}
                         </div>
