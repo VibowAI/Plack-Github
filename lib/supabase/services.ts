@@ -575,6 +575,24 @@ export async function saveMessageVersion(parentMessageId: string, responseConten
   return data;
 }
 
+export async function getMessageVersionsForChat(messageIds: string[]) {
+  if (messageIds.length === 0) return [];
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from('message_versions')
+    .select('*')
+    .in('parent_message_id', messageIds)
+    .order('version_number', { ascending: true });
+  if (error) {
+    if (error.code === 'PGRST205') {
+      return [];
+    }
+    logger.logError(LogCategory.DATABASE, "getMessageVersionsForChat failed", error);
+    return [];
+  }
+  return data;
+}
+
 export async function getMessageVersions(parentMessageId: string) {
   const supabase = createClient();
   const { data, error } = await supabase

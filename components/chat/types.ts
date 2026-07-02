@@ -15,6 +15,7 @@ export interface Message {
   id: string;
   role: 'user' | 'model' | 'system';
   content: string;
+  created_at?: string;
   reasoning?: string;
   isStreaming?: boolean;
   attachments?: Attachment[];

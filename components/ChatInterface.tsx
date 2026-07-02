@@ -61,7 +61,8 @@ import {
   CheckSquare,
   AudioLines,
   MoreHorizontal,
-  ChevronLeft
+  ChevronLeft,
+  Clock
 } from 'lucide-react';
 import { Attachment, Message, Chat } from '@/components/chat/types';
 import PlackLive from '@/components/PlackLive';
@@ -72,7 +73,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { createClient } from '@/lib/supabase/client';
 import Image from 'next/image';
 import brandingLogo from '@/src/assets/images/branding_logo_1780697091587.png';
-import { createChat, getChats, updateChatTitle, deleteChat, saveMessage, updateMessage, getMessages, getMessageReactions, setMessageReaction, getMessageVersions, saveMessageVersion, uploadAttachment, saveAttachmentRecord } from '@/lib/supabase/services';
+import { createChat, getChats, updateChatTitle, deleteChat, saveMessage, updateMessage, getMessages, getMessageReactions, setMessageReaction, getMessageVersionsForChat, getMessageVersions, saveMessageVersion, uploadAttachment, saveAttachmentRecord } from '@/lib/supabase/services';
 import { Memory } from '@/lib/supabase/memories';
 import { detectMemoryIntent } from '@/lib/ai/intent';
 import { createDocument, saveDocument, getDocuments, DocumentRecord } from '@/lib/supabase/documents';
@@ -1472,15 +1473,17 @@ export default function ChatInterface() {
 
       // Load versions
       try {
-        const versionsData = await getMessageVersions(id);
+        const messageIds = msgs.map((m: any) => m.id.toString());
+        const versionsData = await getMessageVersionsForChat(messageIds);
         const versionMap: Record<string, { version: number, content: string }[]> = {};
         const activeVMap: Record<string, number> = {};
         
         versionsData.forEach((v: any) => {
-          if (!versionMap[v.message_id]) {
-            versionMap[v.message_id] = [];
+          const msgId = v.parent_message_id;
+          if (!versionMap[msgId]) {
+            versionMap[msgId] = [];
           }
-          versionMap[v.message_id].push({ version: v.version_number, content: v.content });
+          versionMap[msgId].push({ version: v.version_number, content: v.response_content });
         });
         
         // Sort each array by version_number ascending
@@ -1963,6 +1966,7 @@ export default function ChatInterface() {
   };
 
   const handleEditMessageSave = async (msgId: string, newContent: string) => {
+    console.log("[EDIT MESSAGE START]", { msgId, newContentLength: newContent.length });
     if (!activeChatId || !newContent.trim()) return;
     
     console.log("[MESSAGE EDIT START]", { messageId: msgId, chatId: activeChatId });
@@ -2031,7 +2035,7 @@ export default function ChatInterface() {
         const sliced = updatedMessages.slice(0, targetIndex + 1);
         setMessages(sliced);
         setTimeout(() => {
-          handleSubmit(undefined, undefined, true, sliced);
+          handleSubmit(undefined, newContent, undefined, undefined, sliced[targetIndex].attachments, msgId);
         }, 100);
       }
 
@@ -2425,7 +2429,7 @@ export default function ChatInterface() {
   };
 
   // Send message with multi-stream tracking and settings incorporation
-  async function handleSubmit(e?: React.FormEvent, customPrompt?: string, regenerateMsgId?: string, nextVersionNum?: number, regenerateAttachments?: Attachment[]) {
+  async function handleSubmit(e?: React.FormEvent, customPrompt?: string, regenerateMsgId?: string, nextVersionNum?: number, regenerateAttachments?: Attachment[], editedUserMsgId?: string) {
     if (e) e.preventDefault();
     const promptToSend = (customPrompt || inputValue).trim();
     if (!promptToSend && attachments.length === 0 && !regenerateMsgId && (!regenerateAttachments || regenerateAttachments.length === 0)) return;
@@ -2537,11 +2541,14 @@ export default function ChatInterface() {
       }
 
       let userMsgId = '';
-      if (!regenerateMsgId) {
+      if (!regenerateMsgId && !editedUserMsgId) {
         userMsgId = `user-${crypto.randomUUID()}`;
         assistantMsgId = `assistant-${crypto.randomUUID()}`;
-      } else {
+      } else if (regenerateMsgId) {
         assistantMsgId = regenerateMsgId;
+      } else if (editedUserMsgId) {
+        userMsgId = editedUserMsgId;
+        assistantMsgId = `assistant-${crypto.randomUUID()}`;
       }
 
       let currentMessages = currentChatId ? (activeStreams[currentChatId]?.messages ?? messages) : [];
@@ -2554,6 +2561,9 @@ export default function ChatInterface() {
           // Don't include the preceding user message in currentMessages for API, because handleSubmit adds it manually
           currentMessages = currentMessages.slice(0, Math.max(0, targetIndex - 1));
         }
+      } else if (editedUserMsgId) {
+        // UI is already updated via handleEditMessageSave
+        updatedMessages = [...currentMessages];
       } else {
         // Add user message to UI
         const newUserMessage: Message = {
@@ -2702,7 +2712,7 @@ export default function ChatInterface() {
           });
         });
 
-        if (!regenerateMsgId) {
+        if (!regenerateMsgId && !editedUserMsgId) {
           saveMessage(chatIdStr, 'user', promptToSend).then(async savedMsg => {
             if (currentAttachments.length > 0) {
               await Promise.all(currentAttachments.map(async (att: Attachment) => {
@@ -3279,12 +3289,10 @@ export default function ChatInterface() {
             if (regenerateMsgId && nextVersionNum) {
               const versionNum = nextVersionNum;
               
-              // 1. Update main messages table (Bypassed: server-side background worker handles upserting this)
-              /*
+              // 1. Update main messages table
               await updateMessage(regenerateMsgId, finalSavedText, finalSavedReasoning).catch(err => {
                 logger.logError(LogCategory.DATABASE, "Failed to update regenerated assistant message", err);
               });
-              */
               
               // 2. Save new version
               console.log("[VERSION SAVED]", { regenerateMsgId, versionNum });
@@ -3300,12 +3308,10 @@ export default function ChatInterface() {
                 console.error("[REGENERATE ERROR] Failed to save message version:", err);
               });
             } else {
-              // Bypassed: server-side background worker handles creating this automatically
-              /*
+              // Create the main message
               await saveMessage(finalSavedChatId, 'model', finalSavedText, finalSavedReasoning).catch(err => {
                 logger.logError(LogCategory.DATABASE, "Failed to save assistant message", err);
               });
-              */
             }
           }
 
@@ -5206,7 +5212,7 @@ export default function ChatInterface() {
                                     </div>
                                   )}
 
-                                  {/* Regenerate */}
+                                  {/* Retry */}
                                   <button
                                     onClick={() => handleRegenerate(message.id)}
                                     disabled={isStreaming}
@@ -5214,7 +5220,7 @@ export default function ChatInterface() {
                                       "p-1.5 rounded-full transition-colors active:scale-95 cursor-pointer",
                                       isStreaming ? "opacity-30 cursor-not-allowed" : (theme === 'light' ? "hover:bg-neutral-100 text-neutral-400 hover:text-neutral-700" : "hover:bg-neutral-800 text-neutral-500 hover:text-neutral-300")
                                     )}
-                                    title="Regenerate"
+                                    title="Retry"
                                   >
                                     <RefreshCw size={14} className={cn("stroke-[2.5px]", isStreaming && "animate-spin")} />
                                   </button>
@@ -5239,19 +5245,6 @@ export default function ChatInterface() {
                                       )}>
                                         <button
                                           onClick={() => {
-                                            handleCopyMessage(contentToRender);
-                                            setActiveMoreMenu(null);
-                                          }}
-                                          className={cn(
-                                            "w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors text-left",
-                                            theme === 'light' ? "hover:bg-neutral-100 text-neutral-700" : "hover:bg-neutral-800 text-neutral-300"
-                                          )}
-                                        >
-                                          <Copy size={14} />
-                                          Copy Response
-                                        </button>
-                                        <button
-                                          onClick={() => {
                                             const sources = getMessageSourcesList(message);
                                             if (sources.length > 0) {
                                               setActiveSources(sources);
@@ -5269,6 +5262,15 @@ export default function ChatInterface() {
                                           <Search size={14} />
                                           View Sources
                                         </button>
+                                        <div
+                                          className={cn(
+                                            "w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors text-left opacity-70",
+                                            theme === 'light' ? "text-neutral-500" : "text-neutral-400"
+                                          )}
+                                        >
+                                          <Clock size={14} />
+                                          {message.created_at ? new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Just now'}
+                                        </div>
                                       </div>
                                     )}
                                   </div>
