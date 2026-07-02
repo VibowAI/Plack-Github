@@ -287,18 +287,24 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
 
   // --- Auto-Save Logic ---
 
-  const saveToSupabase = async (titleToSave: string, contentToSave: string, uid: string, did: string | null) => {
-    if (titleToSave === lastSavedTitle && contentToSave === lastSavedContent && did) return;
+  const saveToSupabase = async (titleToSave: string, contentToSave: string, uid: string, did: string | null, customCheckpoints?: string[]) => {
+    if (!customCheckpoints && titleToSave === lastSavedTitle && contentToSave === lastSavedContent && did) return;
     
+    console.log('[DOCUMENT SAVE START]');
+    console.log(`Document ID: ${did || 'NEW'}`);
     setSaveStatus('saving');
+    
     try {
+      const activeCheckpoints = customCheckpoints || checkpoints;
+      const activeIndex = customCheckpoints ? customCheckpoints.length - 1 : currentCheckpointIndex;
+
       const docRecord: DocumentRecord = {
         id: did || crypto.randomUUID(),
         user_id: uid,
         title: titleToSave,
         content: contentToSave,
-        metadata: { version: currentCheckpointIndex + 1 },
-        version_snapshots: checkpoints.map((c, i) => ({
+        metadata: { version: activeIndex + 1 },
+        version_snapshots: activeCheckpoints.map((c, i) => ({
            version: i + 1,
            title: titleToSave,
            content: c,
@@ -308,14 +314,20 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
 
       const result = await saveDocument(docRecord);
       if (result) {
+        console.log('[DOCUMENT SAVE SUCCESS]');
+        console.log(`Rows Updated: ${result.id ? 1 : 0}`);
         setInternalDocId(result.id);
         setLastSavedContent(contentToSave);
         setLastSavedTitle(titleToSave);
         setSaveStatus('saved');
+        console.log('[AUTOSAVE COMPLETE]');
         setTimeout(() => setSaveStatus('idle'), 2000);
+      } else {
+        throw new Error("Save returned null result");
       }
-    } catch (err) {
-      console.error('[AUTO-SAVE FAILED]', err);
+    } catch (err: any) {
+      console.log('[DOCUMENT SAVE FAILED]');
+      console.log(`Reason: ${err?.message || err}`);
       setSaveStatus('failed');
     }
   };
@@ -331,7 +343,7 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
   useEffect(() => {
     debouncedSaveRef.current = debounce((titleToSave: string, contentToSave: string, uid: string, did: string | null) => {
       saveRef.current(titleToSave, contentToSave, uid, did);
-    }, 2000);
+    }, 1000);
     return () => {
       if (debouncedSaveRef.current) debouncedSaveRef.current.cancel();
     };
@@ -481,7 +493,7 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
     }
   };
 
-  const handleAcceptRevision = () => {
+  const handleAcceptRevision = async () => {
     if (!draftDocument) return;
     
     // Parse Title and Body
@@ -493,13 +505,25 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
       newBody = titleMatch[2].trim();
     }
 
+    console.log('[ACCEPT REVISION] Applying changes and forcing save...', { title: newTitle });
+
+    // 1. Calculate new checkpoints
+    const newCheckpoints = [...checkpoints.slice(0, currentCheckpointIndex + 1), newBody];
+    
+    // 2. Update local state
     setActiveDocument(newBody);
     setEditedTitle(newTitle);
-    updateCheckpoints(newBody);
+    setCheckpoints(newCheckpoints);
+    setCurrentCheckpointIndex(newCheckpoints.length - 1);
     
     setDraftDocument(null);
     setIsRevisionPending(false);
     setValidationState(null);
+
+    // 3. Immediately persist to Supabase
+    if (userId) {
+      await saveToSupabase(newTitle, newBody, userId, actualDocId, newCheckpoints);
+    }
   };
 
   const handleRejectRevision = () => {
@@ -520,7 +544,7 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
     setActiveDocument(latestSaved);
     setDraftDocument(null);
     setDiffHunks(null);
-    setRevisionPending(false);
+    setIsRevisionPending(false);
     setValidationState(null);
     setIsEditing(false);
   };
@@ -831,7 +855,7 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
                               onClick={handleAcceptRevision}
                               className="px-5 py-1.5 rounded-full bg-indigo-600 text-white text-[11px] font-bold shadow-md hover:bg-indigo-700 transition-all active:scale-95 cursor-pointer flex items-center gap-1.5"
                             >
-                              <Check size={14} /> Accept
+                              <Check size={14} /> Apply Changes
                             </button>
                           </div>
                         </motion.div>
