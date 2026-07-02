@@ -296,9 +296,11 @@ export default function ChatInterface() {
     chatsRef.current = chats;
   }, [chats]);
   const activeChatIdRef = useRef<string | null>(activeChatId);
-  useEffect(() => {
-    activeChatIdRef.current = activeChatId;
-  }, [activeChatId]);
+  // Synchronous sync helper
+  const syncActiveChatId = (id: string | null) => {
+    activeChatIdRef.current = id;
+    setActiveChatId(id);
+  };
 
   // Multi-chat background streaming and tracking states
   const abortControllersRef = useRef<Record<string, AbortController | null>>({});
@@ -1187,7 +1189,7 @@ export default function ChatInterface() {
       const currentPath = window.location.pathname;
       if (currentPath === '/') {
         if (activeChatIdRef.current !== null) {
-          setActiveChatId(null);
+          syncActiveChatId(null);
         }
         setIsTemporaryChat(false);
         if (messages.length > 0) {
@@ -1224,7 +1226,7 @@ export default function ChatInterface() {
     const handlePopState = () => {
       const path = window.location.pathname;
       if (path === '/') {
-        setActiveChatId(null);
+        syncActiveChatId(null);
         localStorage.removeItem('lastActiveChatId');
         setMessages([]);
         setExpandedReasonings({});
@@ -1393,7 +1395,11 @@ export default function ChatInterface() {
     const id = extractChatId(idOrSlug);
     if (!id) return;
 
-    setActiveChatId(id);
+    const oldChat = activeChatIdRef.current;
+    console.log(`[CHAT SWITCH]\nOld Chat: ${oldChat || 'None'}\nNew Chat: ${id}`);
+    console.log(`[CHAT OPEN]\nChat ID: ${id}`);
+
+    syncActiveChatId(id);
     setIsTemporaryChat(false);
     localStorage.setItem('lastActiveChatId', id);
     setExpandedReasonings({});
@@ -1434,7 +1440,7 @@ export default function ChatInterface() {
       if (chatRowError || !chatRow) {
         logger.logError(LogCategory.DATABASE, "Access Denied or Chat Not Found", chatRowError || "Empty match");
         setErrorStatus("Chat not found");
-        setActiveChatId(null);
+        syncActiveChatId(null);
         setMessages([]);
         window.history.replaceState(null, '', '/');
         return;
@@ -1443,7 +1449,7 @@ export default function ChatInterface() {
       if (chatRow.user_id !== session?.user?.id) {
         logger.logError(LogCategory.DATABASE, "User ID ownership mismatch", { chatOwner: chatRow.user_id, sessionUser: session?.user?.id });
         setErrorStatus("Chat not found");
-        setActiveChatId(null);
+        syncActiveChatId(null);
         setMessages([]);
         window.history.replaceState(null, '', '/');
         return;
@@ -1456,6 +1462,7 @@ export default function ChatInterface() {
       }
 
       const msgs = await getMessages(id);
+      console.log(`[MESSAGE QUERY]\nChat ID: ${id}\nRows Returned: ${msgs.length}`);
       
       // Load reactions
       if (session?.user?.id) {
@@ -1501,6 +1508,7 @@ export default function ChatInterface() {
       // Map to UI model
       const formatted = msgs.map((m: any) => ({
         id: m.id.toString(),
+        chat_id: id,
         role: m.role,
         content: m.content || '',
         reasoning: m.reasoning || undefined,
@@ -1848,7 +1856,7 @@ export default function ChatInterface() {
 
   function clearChat() {
     // We DO NOT abort background generations here!
-    setActiveChatId(null);
+    syncActiveChatId(null);
     setIsTemporaryChat(false);
     setInputValue('');
     localStorage.removeItem('lastActiveChatId');
@@ -1864,7 +1872,7 @@ export default function ChatInterface() {
   };
 
   const startTemporaryChat = () => {
-    setActiveChatId(null);
+    syncActiveChatId(null);
     setIsTemporaryChat(true);
     setInputValue('');
     localStorage.removeItem('lastActiveChatId');
@@ -2050,10 +2058,23 @@ export default function ChatInterface() {
     }
   };
 
-  const handleRegenerate = async (msgId: string) => {
+  const handleRegenerate = async (msgId: string, targetChatId?: string) => {
     console.log("[ACTIVE CHAT]", activeChatId);
-    console.log("[RETRY CLICK]", { msgId });
-    
+    console.log("[RETRY CLICK]", { msgId, targetChatId });
+
+    // Determine target chat ID
+    const targetChat = targetChatId || messages.find(m => m.id === msgId)?.chat_id || activeChatId;
+
+    if (targetChat && activeChatId !== targetChat) {
+      console.log(`[CHAT REDIRECT] Redirecting from ${activeChatId} to ${targetChat} for retry`);
+      await selectChat(targetChat);
+      // Wait a moment for messages and state to settle/load
+      setTimeout(() => {
+        handleRegenerate(msgId, targetChat);
+      }, 300);
+      return;
+    }
+
     const targetIndex = messages.findIndex(m => m.id === msgId);
     if (targetIndex === -1) {
       console.error("[REGENERATE ERROR] Target message not found in state:", msgId);
@@ -2071,11 +2092,11 @@ export default function ChatInterface() {
       if (messageChatId) {
         console.log("[CHAT STATE RECOVERED] Recovered activeChatId from message.chat_id", messageChatId);
         effectiveChatId = messageChatId;
-        setActiveChatId(messageChatId);
+        syncActiveChatId(messageChatId);
       } else if (urlChatId) {
         console.log("[CHAT STATE RECOVERED] Recovered activeChatId from URL", urlChatId);
         effectiveChatId = urlChatId;
-        setActiveChatId(urlChatId);
+        syncActiveChatId(urlChatId);
       }
     }
 
@@ -2263,8 +2284,7 @@ export default function ChatInterface() {
           const newChat = await createChat(uId!, initialTitle || "Voice Conversation");
           setChats(prev => [newChat, ...prev]);
           targetChatId = newChat.id;
-          setActiveChatId(newChat.id);
-          activeChatIdRef.current = newChat.id;
+          syncActiveChatId(newChat.id);
           setLiveSessionChatId(newChat.id);
           console.log(`Chat ID: ${newChat.id}`);
 
@@ -2289,7 +2309,11 @@ export default function ChatInterface() {
         };
       }
 
-      setMessages(prev => [...prev, userMsgFormatted]);
+      if (activeChatIdRef.current === targetChatId) {
+        setMessages(prev => [...prev, userMsgFormatted]);
+      } else {
+        console.warn(`[MESSAGE DROPPED]\nReason:\nWrong chat_id`);
+      }
       console.log("[LIVE APPEND]");
       console.log(`Chat ID: ${targetChatId}`);
 
@@ -2334,8 +2358,7 @@ export default function ChatInterface() {
           const newChat = await createChat(uId!, initialTitle);
           setChats(prev => [newChat, ...prev]);
           targetChatId = newChat.id;
-          setActiveChatId(newChat.id);
-          activeChatIdRef.current = newChat.id;
+          syncActiveChatId(newChat.id);
           setLiveSessionChatId(newChat.id);
           console.log(`Chat ID: ${newChat.id}`);
 
@@ -2359,7 +2382,11 @@ export default function ChatInterface() {
         };
       }
 
-      setMessages(prev => [...prev, modelMsgFormatted]);
+      if (activeChatIdRef.current === targetChatId) {
+        setMessages(prev => [...prev, modelMsgFormatted]);
+      } else {
+        console.warn(`[MESSAGE DROPPED]\nReason:\nWrong chat_id`);
+      }
       console.log("[LIVE APPEND]");
       console.log(`Chat ID: ${targetChatId}`);
 
@@ -2385,8 +2412,7 @@ export default function ChatInterface() {
         const newChat = await createChat(uId, initialTitle || "Voice Conversation");
         setChats(prev => [newChat, ...prev]);
         targetChatId = newChat.id;
-        setActiveChatId(newChat.id);
-        activeChatIdRef.current = newChat.id;
+        syncActiveChatId(newChat.id);
         setLiveSessionChatId(newChat.id);
         console.log(`Chat ID: ${newChat.id}`);
 
@@ -2431,11 +2457,15 @@ export default function ChatInterface() {
       }
 
       // 4. Update state message array so they appear immediately in background
-      setMessages(prev => {
-        const list = [...prev, userMsgFormatted];
-        if (modelMsgFormatted) list.push(modelMsgFormatted);
-        return list;
-      });
+      if (activeChatIdRef.current === chatIdStr) {
+        setMessages(prev => {
+          const list = [...prev, userMsgFormatted];
+          if (modelMsgFormatted) list.push(modelMsgFormatted);
+          return list;
+        });
+      } else {
+        console.warn(`[MESSAGE DROPPED]\nReason:\nWrong chat_id`);
+      }
       console.log("[LIVE APPEND]");
       console.log(`Chat ID: ${chatIdStr}`);
 
@@ -2473,14 +2503,14 @@ export default function ChatInterface() {
       if (urlChatId) {
         console.log("[CHAT STATE RECOVERY] handleSubmit recovered targetChatId from URL", urlChatId);
         targetChatId = urlChatId;
-        setActiveChatId(urlChatId);
+        syncActiveChatId(urlChatId);
       } else if (regenerateMsgId) {
         // Find message and its chat_id
         const msg = messages.find(m => m.id === regenerateMsgId);
         if (msg?.chat_id) {
           console.log("[CHAT STATE RECOVERY] handleSubmit recovered targetChatId from message.chat_id", msg.chat_id);
           targetChatId = msg.chat_id;
-          setActiveChatId(msg.chat_id);
+          syncActiveChatId(msg.chat_id);
         }
       }
     }
@@ -2593,7 +2623,9 @@ export default function ChatInterface() {
         assistantMsgId = `assistant-${crypto.randomUUID()}`;
       }
 
-      let currentMessages = currentChatId ? (activeStreams[currentChatId]?.messages ?? messages) : [];
+      let currentMessages = currentChatId 
+        ? (activeStreams[currentChatId]?.messages ?? messages.filter(m => m.chat_id === currentChatId)) 
+        : [];
       let updatedMessages = currentMessages;
 
       if (regenerateMsgId) {
@@ -2727,7 +2759,7 @@ export default function ChatInterface() {
 
             // Sync navigation & state securely
             if (activeChatIdRef.current === null) {
-              setActiveChatId(newChatId);
+              syncActiveChatId(newChatId);
               localStorage.setItem('lastActiveChatId', newChatId);
               setChats(prev => {
                 if (prev.some(c => c.id === newChatId)) return prev;
@@ -2831,6 +2863,8 @@ export default function ChatInterface() {
         if (activeChatIdRef.current === chatId) {
           logAndSetMessages(messagesUpdater);
           setIsStreaming(streamStatus);
+        } else {
+          console.warn(`[MESSAGE DROPPED]\nReason:\nWrong chat_id`);
         }
 
         setActiveStreams(prev => {
@@ -2938,6 +2972,7 @@ export default function ChatInterface() {
           concurrentCount: concurrentCountRef.current
         });
         logger.logInfo(LogCategory.MODEL, `[MODEL START] Model: ${targetModel}`);
+        console.log(`[MODEL START]\nModel Name: ${targetModel}`);
 
 
         try {
@@ -2993,6 +3028,7 @@ export default function ChatInterface() {
               status: initResponse.status,
               responseBody: errorText,
             });
+            throw { status: initResponse.status, message: errorText || "Background generation queueing failed" };
           }
 
           const { jobId } = await initResponse.json();
@@ -3029,15 +3065,7 @@ export default function ChatInterface() {
               });
             }
 
-            if (response.status === 429) {
-               addSystemMessage("The AI is currently busy. Please try again in a few moments.");
-            } else {
-               addSystemMessage("Connection interrupted. Please try again later.");
-            }
-            
-            // Remove the placeholder assistant message since it failed immediately
-            updateMessagesAndStreaming(streamChatId, prev => prev.filter(m => m.id !== assistantMsgId), false);
-            return;
+            throw { status: response.status, message: errorText || "Network request failed" };
           }
 
           // Successfully established. Charge deep_research if enabled.
@@ -3380,6 +3408,10 @@ export default function ChatInterface() {
             setTimeout(() => fetchWebSearchUsage(), 1000);
           }
 
+          if (retryCount > 0) {
+            console.log(`[FALLBACK SUCCESS]\nModel Name: ${targetModel}`);
+          }
+
           updateMessagesAndStreaming(streamChatId, prev => prev.map((m: Message) => {
             if (m.id === assistantMsgId) {
               return {
@@ -3414,33 +3446,43 @@ export default function ChatInterface() {
 
           logger.logError(LogCategory.ERROR, "Generation chunk error", error);
           
-          const isRetryable = (status: number) => [429, 500, 502, 503, 504].includes(status);
+          const isNetworkError = error?.message?.toLowerCase().includes('fetch') || error?.message?.toLowerCase().includes('network');
+          const statusCode = error?.status || (isNetworkError ? 'Network Error' : 500);
+
+          console.log(`[MODEL FAILED]\nCode: ${statusCode}\nModel Name: ${targetModel}`);
+
+          const isRetryable = (status: any) => [429, 500, 502, 503, 504, 'Network Error'].includes(status);
           
           let nextModel: ModelName | null = null;
           if (targetModel === 'ED1.7') nextModel = 'ED1.1';
           else if (targetModel === 'ED1.1') nextModel = 'D1-Lite';
           else if (targetModel === 'D1-Lite') nextModel = 'E1';
 
-          const canRetry = nextModel && isRetryable(response?.status || initResponse?.status || 0);
+          const canRetry = nextModel && isRetryable(statusCode);
 
           if (canRetry) {
-             logger.logInfo(LogCategory.MODEL, `[MODEL FAILED] Code: ${response?.status || initResponse?.status || 'Unknown'}`);
-             logger.logInfo(LogCategory.MODEL, `[FALLBACK MODEL] Model: ${nextModel}`);
+             console.log(`[FALLBACK MODEL]\nModel Name: ${nextModel}`);
              setActiveModel(nextModel);
              setErrorStatus(`Switched to ${nextModel} after a temporary model error.`);
              await new Promise(r => setTimeout(r, 1000));
              await executeStream(nextModel, retryCount + 1);
-             logger.logInfo(LogCategory.MODEL, `[FALLBACK SUCCESS] Model: ${nextModel}`);
           } else {
-             const errorStatus = response?.status || initResponse?.status || 'Unknown';
-             logger.logError(LogCategory.ERROR, `[FINAL FAILURE] Code: ${errorStatus}`, error);
+             console.log(`[FINAL FAILURE]\nCode: ${statusCode}`);
              
+             let errDesc = "Unexpected error.";
+             if (statusCode === 429) errDesc = "AI service is busy.";
+             else if (statusCode === 500) errDesc = "Temporary server error.";
+             else if (statusCode === 502) errDesc = "Gateway error.";
+             else if (statusCode === 503) errDesc = "Service unavailable.";
+             else if (statusCode === 504) errDesc = "Request timed out.";
+             else if (statusCode === 'Network Error') errDesc = "Network connection lost.";
+
              // Final Failure: Add assistant error message
              const errorMessage: Message = {
                 id: `assistant-${crypto.randomUUID()}`,
                 chat_id: streamChatId || undefined,
                 role: 'model',
-                content: `⚠️ Error ${errorStatus}\n\n${errorStatus === 429 ? "AI service is busy." : "Temporary server error."}`,
+                content: `⚠️ Error ${statusCode}\n\n${errDesc}`,
                 isStreaming: false
              };
              updateMessagesAndStreaming(streamChatId, prev => [...prev.filter(m => m.id !== assistantMsgId), errorMessage], false);
@@ -4737,7 +4779,9 @@ export default function ChatInterface() {
           </header>
 
         {/* Conversation Canvas Area */}
-        <div className={cn(
+        <div 
+          key={activeChatId || 'new-chat'}
+          className={cn(
           "flex-1 w-full mx-auto px-4 sm:px-6 md:px-8 select-text overflow-x-hidden relative z-10 flex flex-col justify-between transition-all duration-300 ease-in-out",
           isLiveModeOpen 
             ? "max-w-[700px] pt-32 sm:pt-40 pb-[200px] sm:pb-[240px]" 
@@ -5272,7 +5316,7 @@ export default function ChatInterface() {
 
                                   {/* Retry */}
                                   <button
-                                    onClick={() => handleRegenerate(message.id)}
+                                    onClick={() => handleRegenerate(message.id, message.chat_id)}
                                     disabled={isStreaming}
                                     className={cn(
                                       "p-1.5 rounded-full transition-colors active:scale-95 cursor-pointer",
