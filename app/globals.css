@@ -99,6 +99,28 @@
   }
 }
 
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.metallic-shimmer-text {
+  background: linear-gradient(
+    90deg,
+    #9ca3af 0%,
+    #f3f4f6 20%,
+    #ffffff 45%,
+    #f3f4f6 70%,
+    #9ca3af 100%
+  );
+  background-size: 200% auto;
+  color: transparent;
+  background-clip: text;
+  -webkit-background-clip: text;
+  animation: shimmer 3s linear infinite;
+  text-shadow: 0 0 15px rgba(255, 255, 255, 0.1);
+}
+
 .animate-inner-glow {
   animation: inner-glow 3s ease-in-out infinite;
 }

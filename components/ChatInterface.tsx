@@ -172,32 +172,25 @@ function extractDocumentBlock(fullText: string): ExtractedDocument {
 
 // AI Activity Panel Component
 const AIActivityPanel = ({ actionName, theme, icon: Icon, colorClass }: { actionName: string, theme: string, icon?: any, colorClass?: string }) => {
-  const IconComponent = Icon || Sparkles;
   return (
-    <div className={cn(
-      "flex items-center gap-3 p-2.5 px-4 rounded-xl border shadow-sm max-w-fit transition-all duration-300 animate-in fade-in slide-in-from-bottom-2",
-      theme === 'light' ? "bg-white border-neutral-200" : "bg-neutral-900 border-neutral-800"
-    )}>
-      <div className={cn(
-        "flex items-center justify-center w-6 h-6 rounded-lg",
-        colorClass || "bg-indigo-500/10 text-indigo-500"
-      )}>
-        <IconComponent size={14} className="animate-pulse" />
+    <div className="flex items-center gap-3 py-6 animate-in fade-in slide-in-from-bottom-2 duration-1000">
+      <div className="relative">
+        <span className={cn(
+          "text-[17px] font-bold font-sans tracking-tight metallic-shimmer-text select-none",
+          theme === 'light' ? "text-neutral-800" : "text-neutral-100"
+        )}>
+          {actionName}
+        </span>
+        {/* Subtle reflection overlay */}
+        <span className="absolute inset-0 metallic-shimmer-text opacity-40 blur-[2px] pointer-events-none">
+          {actionName}
+        </span>
       </div>
-      <span className={cn(
-        "text-[13px] font-bold font-sans tracking-tight",
-        theme === 'light' ? "text-neutral-700" : "text-neutral-300"
-      )}>
-        {actionName}
-      </span>
-      <span className={cn(
-        "flex items-center gap-1 ml-2",
-        theme === 'light' ? "text-neutral-400" : "text-neutral-500"
-      )}>
-        <span className="w-1 h-1 rounded-full bg-current animate-bounce" style={{ animationDelay: '0ms' }} />
-        <span className="w-1 h-1 rounded-full bg-current animate-bounce" style={{ animationDelay: '150ms' }} />
-        <span className="w-1 h-1 rounded-full bg-current animate-bounce" style={{ animationDelay: '300ms' }} />
-      </span>
+      <div className="flex gap-1.5 items-center ml-1">
+        <span className="w-1.5 h-1.5 rounded-full bg-indigo-500/80 animate-pulse duration-700" />
+        <span className="w-1.5 h-1.5 rounded-full bg-indigo-400/60 animate-pulse duration-700 delay-150" />
+        <span className="w-1.5 h-1.5 rounded-full bg-indigo-300/40 animate-pulse duration-700 delay-300" />
+      </div>
     </div>
   );
 };
@@ -1936,45 +1929,68 @@ export default function ChatInterface() {
   };
 
   const handleEditMessageSave = async (msgId: string, newContent: string) => {
-    if (!activeChatId) return;
+    if (!activeChatId || !newContent.trim()) return;
+    
+    console.log("[MESSAGE EDIT SAVE]", { msgId, chatId: activeChatId });
+    
+    // 1. Optimistic UI Update
+    const oldMessages = [...messages];
     const targetIndex = messages.findIndex(m => m.id === msgId);
     if (targetIndex === -1) return;
+    
+    const updatedMessages = [...messages];
+    updatedMessages[targetIndex] = { 
+      ...updatedMessages[targetIndex], 
+      content: newContent,
+      metadata: { ...(updatedMessages[targetIndex].metadata || {}), edited: true }
+    };
+    
+    setMessages(updatedMessages);
+    setEditingMessageId(null);
+    setEditContent('');
 
-    // Sync: Delete target msg + all subsequent msgs
     try {
-      const dbMessages = await getMessages(activeChatId);
-      if (dbMessages && dbMessages.length >= targetIndex) {
-        // Our local UI messages array and DB messages array should map 1:1 up to this point
-        // dbMessages[targetIndex] is the message being edited (if it exists in db)
-        const dbMsgsToDelete = dbMessages.slice(targetIndex);
+      // 2. Persist to Supabase via our new endpoint
+      const response = await fetch('/api/chat/message', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messageId: msgId,
+          content: newContent,
+          userId: session?.user?.id
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to update message in database');
+      }
+
+      console.log("[MESSAGE EDIT COMPLETE]", { msgId });
+      
+      // If the user wants the assistant to RE-RESPOND based on the edit:
+      const isUserMsg = messages[targetIndex].role === 'user';
+      if (isUserMsg) {
+        // According to production-grade edit workflows, we often re-trigger if it was a user message
+        // Delete subsequent messages in Supabase to maintain flow consistency
+        const dbMsgsToDelete = messages.slice(targetIndex + 1);
         if (dbMsgsToDelete.length > 0) {
           const supabase = createClient();
           await supabase.from('messages').delete().in('id', dbMsgsToDelete.map((m: any) => m.id));
         }
+
+        const sliced = updatedMessages.slice(0, targetIndex + 1);
+        setMessages(sliced);
+        setTimeout(() => {
+          handleSubmit(undefined, undefined, true, sliced);
+        }, 100);
       }
+
     } catch (err) {
-      logger.logError(LogCategory.DATABASE, "Failed to sync edit via DB", err);
+      console.error("[MESSAGE EDIT FAILED]", err);
+      showToast("Failed to save message edit");
+      // Rollback
+      setMessages(oldMessages);
     }
-
-    // Cut off UI state at targetIndex
-    const updatedSlicedMessages = messages.slice(0, targetIndex);
-    setMessages(updatedSlicedMessages);
-    setActiveStreams(prev => ({
-       ...prev,
-       [activeChatId]: {
-         ...(prev[activeChatId] || {}),
-         messages: updatedSlicedMessages,
-         isStreaming: false
-       }
-    }));
-    
-    setEditingMessageId(null);
-    setEditContent('');
-
-    // Re-submit the content as if it's a new message appending to the sliced array
-    setTimeout(() => {
-      handleSubmit(undefined, newContent);
-    }, 100);
   };
 
   const handleRegenerate = async (msgId: string) => {
@@ -4318,7 +4334,10 @@ export default function ChatInterface() {
 
       {/* Main Container Wrapper - Handles layout alignment dynamic shifting */}
       <div 
-        className="flex-1 flex flex-col min-h-screen transition-all duration-300 ease-out"
+        className={cn(
+          "flex-1 flex flex-col min-h-screen transition-all duration-300 ease-out",
+          isMobile && activeDocumentEditorId ? "opacity-0 invisible pointer-events-none select-none overflow-hidden" : "opacity-100 visible"
+        )}
         style={{
           paddingLeft: isSidebarOpen && !isMobile ? `${sidebarWidth}px` : '0px',
           paddingRight: (isSourcesSidebarOpen || activeDocumentEditorId) && !isMobile ? `${sourcesWidth}px` : '0px'

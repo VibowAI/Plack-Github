@@ -1260,7 +1260,7 @@ class AIJobProcessor {
 
       // --- GENERATE MEMORIES / ADAPTIVE PROFILE / PARSING ---
       // 1. Retrieve Memories
-      jobEventEmitter.emit(`update:${job.id}`, { status: 'running', researchStatus: 'Retrieving memory...' });
+      jobEventEmitter.emit(`update:${job.id}`, { status: 'running', researchStatus: 'Retrieving Memories' });
       let memoryContext = "";
       let memoriesUsedCount = 0;
       let memoriesUsedList: any[] = [];
@@ -1294,7 +1294,7 @@ class AIJobProcessor {
       }
 
       // Extract Adaptive User Profile Summary
-      jobEventEmitter.emit(`update:${job.id}`, { status: 'running', researchStatus: 'Planning...' });
+      jobEventEmitter.emit(`update:${job.id}`, { status: 'running', researchStatus: 'Planning Response' });
       let profileSummary: any = null;
       if (messages && messages.length > 1) {
         try {
@@ -1467,7 +1467,7 @@ Return ONLY a JSON array of strings, with no markdown tags. Example: ["query 1",
         await sendChunk({ 
           researchTimeline: timeline, 
           activeStageIndex: 2, 
-          researchStatus: `Acquiring references for multi-perspective search queries (${searchQueries.length} channels)...` 
+          researchStatus: "Searching Web" 
         });
 
         let searchSources: any[] = [];
@@ -1553,7 +1553,7 @@ Return ONLY a JSON array of strings, with no markdown tags. Example: ["query 1",
         await sendChunk({ 
           researchTimeline: timeline, 
           activeStageIndex: 3, 
-          researchStatus: "Cross-referencing resources and identifying critical conflicts..." 
+          researchStatus: "Reading Sources" 
         });
 
         let sourcesContext = "COORDINATED SOURCES:\n\n";
@@ -1582,7 +1582,7 @@ Express your thoughts and synthesis steps out loud.`;
         await sendChunk({ 
           researchTimeline: timeline, 
           activeStageIndex: 4, 
-          researchStatus: "Running fact auditing algorithms..." 
+          researchStatus: "Analyzing Results" 
         });
 
         const verificationPrompt = `You are Plack's Principal Quality Verifier. 
@@ -1713,7 +1713,7 @@ Respond with a JSON object: { "requiresSearch": boolean }`;
             }
 
             if (query) {
-              jobEventEmitter.emit(`update:${job.id}`, { status: 'running', researchStatus: 'Searching Web...' });
+              jobEventEmitter.emit(`update:${job.id}`, { status: 'running', researchStatus: 'Searching Web' });
               try {
                 const tavilyRes = await fetch("https://api.tavily.com/search", {
                   method: "POST",
@@ -1934,13 +1934,15 @@ Respond with a JSON object: { "requiresSearch": boolean }`;
           await sendChunk({ memorySaveFailed: true });
         }
         
-        jobEventEmitter.emit(`update:${job.id}`, { status: 'running', researchStatus: 'Generating response...' });
+        jobEventEmitter.emit(`update:${job.id}`, { status: 'running', researchStatus: 'Reasoning' });
 
         const stream = await ai.models.generateContentStream({
           model: model,
           contents: contents,
           config: config
         });
+
+        jobEventEmitter.emit(`update:${job.id}`, { status: 'running', researchStatus: 'Streaming Response' });
 
         let hasSentGrounding = false;
         for await (const chunk of stream) {
@@ -1973,6 +1975,7 @@ Respond with a JSON object: { "requiresSearch": boolean }`;
 
       // --- PERSIST SUCCESSFUL MESSAGE ---
       if (job.chat_id) {
+        jobEventEmitter.emit(`update:${job.id}`, { status: 'running', researchStatus: 'Saving Conversation' });
         try {
           const { error: saveErr } = await supabase
             .from('messages')
@@ -1998,6 +2001,7 @@ Respond with a JSON object: { "requiresSearch": boolean }`;
 
       // Complete job
       job.status = 'completed';
+      jobEventEmitter.emit(`update:${job.id}`, { status: 'completed', researchStatus: 'Completed' });
       job.final_output = fullResponseText;
       job.completed_at = new Date().toISOString();
       job.updated_at = new Date().toISOString();
@@ -2363,6 +2367,39 @@ app.get('/api/config', async (c) => {
     runtime: 'cloudflare-worker',
     buildTime: new Date().toISOString()
   });
+});
+
+// 18. PATCH /api/chat/message
+app.patch('/api/chat/message', async (c) => {
+  try {
+    const { messageId, content, userId } = await c.req.json();
+    if (!messageId || content === undefined) {
+      return c.json({ error: "messageId and content are required" }, 400);
+    }
+
+    const supabase = getAdminClient(c.env);
+    const { data, error } = await supabase
+      .from('messages')
+      .update({ 
+        content: content,
+        updated_at: new Date().toISOString(),
+        metadata: { edited: true, edited_at: new Date().toISOString(), editor_id: userId }
+      })
+      .eq('id', messageId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("[MESSAGE EDIT FAILED]", error);
+      return c.json({ error: error.message }, 500);
+    }
+
+    console.log("[MESSAGE EDIT COMPLETE]", { messageId });
+    return c.json({ success: true, message: data });
+  } catch (err: any) {
+    console.error("[MESSAGE EDIT FAILED]", err);
+    return c.json({ error: err.message || "Internal Server Error" }, 500);
+  }
 });
 
 // 19. Serves fallback index.html for React SPA Routing on GET *
