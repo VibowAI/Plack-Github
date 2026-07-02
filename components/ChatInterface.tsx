@@ -2051,22 +2051,45 @@ export default function ChatInterface() {
   };
 
   const handleRegenerate = async (msgId: string) => {
-    console.log("[REGENERATE START]", { msgId });
-    if (!activeChatId) {
-      console.error("[REGENERATE ERROR] No active chat ID");
-      return;
-    }
-
-    // Prevent starting regenerate if lock is already active
-    if (activeRequestsRef.current[activeChatId]) {
-      logger.logWarn(LogCategory.CHAT, "Ignored regenerate request while chat is already active");
-      console.error("[REGENERATE ERROR] Chat is already active with another request");
-      return;
-    }
-
+    console.log("[ACTIVE CHAT]", activeChatId);
+    console.log("[RETRY CLICK]", { msgId });
+    
     const targetIndex = messages.findIndex(m => m.id === msgId);
     if (targetIndex === -1) {
       console.error("[REGENERATE ERROR] Target message not found in state:", msgId);
+      return;
+    }
+
+    const message = messages[targetIndex];
+    const messageChatId = message.chat_id;
+    const urlChatId = extractChatId(routeChatId);
+
+    let effectiveChatId = activeChatId;
+
+    // Phase 4 & 5: Recovery and Validation
+    if (!effectiveChatId) {
+      if (messageChatId) {
+        console.log("[CHAT STATE RECOVERED] Recovered activeChatId from message.chat_id", messageChatId);
+        effectiveChatId = messageChatId;
+        setActiveChatId(messageChatId);
+      } else if (urlChatId) {
+        console.log("[CHAT STATE RECOVERED] Recovered activeChatId from URL", urlChatId);
+        effectiveChatId = urlChatId;
+        setActiveChatId(urlChatId);
+      }
+    }
+
+    if (!effectiveChatId) {
+      console.error("[REGENERATE ERROR] No active chat ID could be determined after recovery attempts");
+      return;
+    }
+
+    console.log("[CHAT STATE VERIFIED]", { effectiveChatId });
+
+    // Prevent starting regenerate if lock is already active
+    if (activeRequestsRef.current[effectiveChatId]) {
+      logger.logWarn(LogCategory.CHAT, "Ignored regenerate request while chat is already active");
+      console.error("[REGENERATE ERROR] Chat is already active with another request");
       return;
     }
 
@@ -2109,7 +2132,7 @@ export default function ChatInterface() {
 
     // Prepare UI for new version streaming
     const nextVersionNum = (messageVersions[msgId]?.length || 1) + 1;
-    console.log("[NEW VERSION CREATED]", { versionNum: nextVersionNum, msgId });
+    console.log("[VERSION CREATED]", { versionNum: nextVersionNum, msgId });
     setActiveMessageVersion(prev => {
       const nextActive = { ...prev, [msgId]: nextVersionNum };
       console.log("[ACTIVE VERSION UPDATED]", nextActive);
@@ -2131,7 +2154,7 @@ export default function ChatInterface() {
     
     // Truncate messages after targetIndex for context purposes, but we don't delete them from DB yet
     try {
-      const dbMessages = await getMessages(activeChatId);
+      const dbMessages = await getMessages(effectiveChatId);
       if (dbMessages && dbMessages.length > targetIndex + 1) {
         const dbMsgsToDelete = dbMessages.slice(targetIndex + 1);
         if (dbMsgsToDelete.length > 0) {
@@ -2146,6 +2169,7 @@ export default function ChatInterface() {
 
     // Trigger API request directly via handleSubmit
     handleSubmit(undefined, promptText, msgId, nextVersionNum, promptAttachments);
+    console.log("[RETRY COMPLETE]");
   };
 
   const executeTitleGeneration = async (chatId: string, firstMsg: string) => {
@@ -2441,8 +2465,26 @@ export default function ChatInterface() {
       isRegeneration: !!regenerateMsgId
     });
 
-    // Check concurrency locks first before setting up any state
-    const targetChatId = activeChatId;
+    const urlChatId = extractChatId(routeChatId);
+    let targetChatId = activeChatId;
+
+    // Phase 2 & 4: Correct Source of Truth and Recovery
+    if (!targetChatId) {
+      if (urlChatId) {
+        console.log("[CHAT STATE RECOVERY] handleSubmit recovered targetChatId from URL", urlChatId);
+        targetChatId = urlChatId;
+        setActiveChatId(urlChatId);
+      } else if (regenerateMsgId) {
+        // Find message and its chat_id
+        const msg = messages.find(m => m.id === regenerateMsgId);
+        if (msg?.chat_id) {
+          console.log("[CHAT STATE RECOVERY] handleSubmit recovered targetChatId from message.chat_id", msg.chat_id);
+          targetChatId = msg.chat_id;
+          setActiveChatId(msg.chat_id);
+        }
+      }
+    }
+
     if (targetChatId && activeRequestsRef.current[targetChatId]) {
       logger.logWarn(LogCategory.CHAT, `Request already active for chat ${targetChatId}`);
       return;
@@ -2568,6 +2610,7 @@ export default function ChatInterface() {
         // Add user message to UI
         const newUserMessage: Message = {
           id: userMsgId,
+          chat_id: currentChatId || undefined,
           role: 'user',
           content: promptToSend,
           attachments: currentAttachments
@@ -2584,7 +2627,7 @@ export default function ChatInterface() {
       let bgChatPromise: Promise<{ newChatId: string; newChat: any } | null> | null = null;
       streamChatId = currentChatId || 'temporary';
 
-      if (!currentChatId && !isTemporaryChat) {
+      if (!currentChatId && !isTemporaryChat && !regenerateMsgId) {
         bgChatPromise = (async () => {
           try {
             if (isLiveModeOpenRef.current && liveSessionChatIdRef.current) {
@@ -2767,6 +2810,7 @@ export default function ChatInterface() {
       // Initial placeholder for streaming response
       const placeholderAssistantMessage: Message = {
         id: assistantMsgId,
+        chat_id: currentChatId || undefined,
         role: 'model',
         content: '',
         isStreaming: true

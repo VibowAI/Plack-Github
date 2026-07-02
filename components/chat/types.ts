@@ -13,6 +13,7 @@ export interface Attachment {
 
 export interface Message {
   id: string;
+  chat_id?: string;
   role: 'user' | 'model' | 'system';
   content: string;
   created_at?: string;
