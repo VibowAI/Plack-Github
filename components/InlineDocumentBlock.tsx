@@ -46,6 +46,34 @@ const UncontrolledEditor = ({ initialHtml, onChange, editorRef, className, theme
   );
 };
 
+// --- Simple Error Boundary for Editor Content ---
+class EditorErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; error: any }> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error: any) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error: any, errorInfo: any) {
+    console.error("[EDITOR RENDER ERROR]", error, errorInfo);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex flex-col items-center justify-center p-12 text-center gap-4">
+          <div className="p-4 bg-rose-500/20 text-rose-500 rounded-full">
+             <Info size={32} />
+          </div>
+          <h3 className="text-xl font-bold">Something went wrong in the editor</h3>
+          <p className="text-sm opacity-60 max-w-sm">{this.state.error?.message || "Unknown rendering error"}</p>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 // --- Main Component ---
 
 export default function InlineDocumentBlock({ id: docIdProp, userId, title, content: initialContent, theme, isStreaming, isActiveEditor, onEditorOpen, width }: InlineDocumentBlockProps) {
@@ -57,6 +85,12 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
 
   const [isEditingState, setIsEditingState] = useState(false);
   const isEditing = isActiveEditor !== undefined ? isActiveEditor : isEditingState;
+
+  useEffect(() => {
+    if (isEditing) {
+      console.log("[EDITOR STATE] isEditing is TRUE", { isActiveEditor, isEditingState, docIdProp });
+    }
+  }, [isEditing, isActiveEditor, isEditingState, docIdProp]);
 
   const setIsEditing = (val: boolean) => {
     setIsEditingState(val);
@@ -154,7 +188,7 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
   const [lastSavedTitle, setLastSavedTitle] = useState(title);
   const [internalDocId, setInternalDocId] = useState<string | null>(null);
 
-  const editorRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<HTMLTextAreaElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // Derive actual doc ID
@@ -535,262 +569,278 @@ export default function InlineDocumentBlock({ id: docIdProp, userId, title, cont
         </div>
       </div>
 
-      {/* EDITOR SIDEBAR / FULLSCREEN (Conditionally rendered via Portal) */}
-      <AnimatePresence>
-        {isEditing && mounted && typeof document !== 'undefined' && createPortal(
-          <>
-            {/* Backdrop for Editor (Mobile Only) */}
-            {isMobile && (
-              <motion.div 
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                onClick={handleStopEditing}
-                className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[99998]"
-              />
-            )}
-            
-            <motion.div 
-              initial={isMobile ? { y: '100%' } : { x: '100%' }}
-              animate={isMobile ? { y: 0 } : { x: 0 }}
-              exit={isMobile ? { y: '100%' } : { x: '100%' }}
-              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-              className={cn(
-                "flex flex-col select-text fixed overflow-hidden",
-                isMobile 
-                  ? "border-none shadow-2xl bg-white dark:bg-neutral-950" 
-                  : "right-0 top-0 bottom-0 border-l z-40 shadow-none rounded-none",
-                theme === 'light' 
-                  ? "bg-white border-neutral-200" 
-                  : (theme === 'cosmic' 
-                      ? "bg-[#06030f] border-indigo-500/10" 
-                      : "bg-neutral-950 border-neutral-800")
+      {/* EDITOR SIDEBAR / FULLSCREEN (Conditionally rendered via Portal for best z-index isolation) */}
+      {mounted && typeof document !== 'undefined' && createPortal(
+        <AnimatePresence mode="wait">
+          {isEditing && (
+            <>
+              {/* Backdrop for Editor (Mobile Only) */}
+              {isMobile && (
+                <motion.div 
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  onClick={handleStopEditing}
+                  className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[99998]"
+                />
               )}
-              style={isMobile ? {
-                position: 'fixed',
-                inset: 0,
-                width: '100vw',
-                height: '100dvh',
-                zIndex: 99999,
-                overflow: 'hidden',
-                paddingTop: 'env(safe-area-inset-top)',
-                paddingBottom: 'env(safe-area-inset-bottom)'
-              } : { width: width || 380, minWidth: 320, maxWidth: 420 }}
-            >
-              {/* Header with Save Status */}
-              <div className={cn(
-                "flex items-center justify-between px-6 py-4 shrink-0 border-b backdrop-blur-md sticky top-0 z-[60]",
-                theme === 'light' ? "bg-white/90 border-neutral-100" : "bg-neutral-900/90 border-neutral-800/60",
-                isMobile && "pt-safe"
-              )}>
-                {isMobile ? (
-                  <div className="flex items-center gap-3 w-full justify-between select-none">
-                    <button 
-                      onClick={handleStopEditing}
-                      className={cn(
-                        "flex items-center gap-1 py-2 px-1 -ml-1 rounded-full transition-all cursor-pointer font-bold text-[14px]",
-                        theme === 'light' ? "text-indigo-600 hover:text-indigo-800" : "text-indigo-400 hover:text-indigo-300"
-                      )}
-                    >
-                      <ChevronLeft size={20} />
-                      <span>Back</span>
-                    </button>
-                    <span className={cn(
-                      "font-sans font-extrabold text-[15px] tracking-tight truncate flex-1 text-center px-4",
-                      theme === 'light' ? "text-neutral-900" : "text-neutral-100"
-                    )}>
-                      {editedTitle || "Untitled Document"}
-                    </span>
-                    <div className="w-16 shrink-0 flex justify-end">
-                      <span className="text-[10px] font-bold opacity-40 uppercase tracking-widest text-right">
-                        {saveStatus === 'saving' && "..."}
-                        {saveStatus === 'saved' && "Saved"}
-                        {saveStatus === 'failed' && "Err"}
-                        {saveStatus === 'idle' && `v${currentCheckpointIndex + 1}`}
-                      </span>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <div className="flex items-center gap-3 overflow-hidden">
+              
+              <motion.div 
+                key={`editor-sidebar-${actualDocId}`}
+                initial={isMobile ? { y: '100%' } : { x: '100%' }}
+                animate={isMobile ? { y: 0 } : { x: 0 }}
+                exit={isMobile ? { y: '100%' } : { x: '100%' }}
+                transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+                onUpdate={(latest) => {
+                  if (latest.x === 0 || latest.y === 0) {
+                    console.log("[EDITOR READY] Animation complete, sidebar is visible.", { isMobile, width: width || 380 });
+                  }
+                }}
+                className={cn(
+                  "flex flex-col select-text fixed overflow-hidden",
+                  isMobile 
+                    ? "border-none shadow-2xl bg-white dark:bg-neutral-950" 
+                    : "right-0 top-0 bottom-0 border-l z-[100] shadow-none rounded-none",
+                  theme === 'light' 
+                    ? "bg-white border-neutral-200" 
+                    : (theme === 'cosmic' 
+                        ? "bg-[#06030f] border-indigo-500/10" 
+                        : "bg-neutral-950 border-neutral-800")
+                )}
+                style={isMobile ? {
+                  position: 'fixed',
+                  inset: 0,
+                  width: '100vw',
+                  height: '100dvh',
+                  zIndex: 99999,
+                  overflow: 'hidden',
+                  paddingTop: 'env(safe-area-inset-top)',
+                  paddingBottom: 'env(safe-area-inset-bottom)'
+                } : { width: width || 380, minWidth: 320, maxWidth: 420 }}
+              >
+                {/* Header with Save Status */}
+                <div className={cn(
+                  "flex items-center justify-between px-6 py-4 shrink-0 border-b backdrop-blur-md sticky top-0 z-[60]",
+                  theme === 'light' ? "bg-white/90 border-neutral-100" : "bg-neutral-900/90 border-neutral-800/60",
+                  isMobile && "pt-safe"
+                )}>
+                  {isMobile ? (
+                    <div className="flex items-center gap-3 w-full justify-between select-none">
                       <button 
                         onClick={handleStopEditing}
                         className={cn(
-                          "p-2 rounded-full transition-all cursor-pointer",
-                          theme === 'light' ? "hover:bg-neutral-100 text-neutral-500" : "hover:bg-neutral-800 text-neutral-400"
+                          "flex items-center gap-1 py-2 px-1 -ml-1 rounded-full transition-all cursor-pointer font-bold text-[14px]",
+                          theme === 'light' ? "text-indigo-600 hover:text-indigo-800" : "text-indigo-400 hover:text-indigo-300"
                         )}
                       >
-                        <X size={20} />
+                        <ChevronLeft size={20} />
+                        <span>Back</span>
                       </button>
-                      <div className={cn(
-                        "p-2 rounded-xl shrink-0",
-                        theme === 'light' ? "bg-indigo-50 text-indigo-600 shadow-sm" : "bg-indigo-500/10 text-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.1)]"
+                      <span className={cn(
+                        "font-sans font-extrabold text-[15px] tracking-tight truncate flex-1 text-center px-4",
+                        theme === 'light' ? "text-neutral-900" : "text-neutral-100"
                       )}>
-                        <FileText size={20} />
-                      </div>
-                      <div className="flex flex-col overflow-hidden">
-                        <span className={cn(
-                          "font-sans font-extrabold text-[15px] tracking-tight truncate",
-                          theme === 'light' ? "text-neutral-900" : "text-neutral-100"
-                        )}>
-                          {editedTitle || "Untitled Document"}
-                        </span>
-                        <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest opacity-40">
-                          {saveStatus === 'saving' && <span className="flex items-center gap-1"><Sparkles size={10} className="animate-spin" /> Saving...</span>}
-                          {saveStatus === 'saved' && <span className="flex items-center gap-1 text-emerald-500"><Check size={10} /> Saved to Supabase</span>}
-                          {saveStatus === 'failed' && <span className="flex items-center gap-1 text-rose-500">Failed</span>}
-                          {saveStatus === 'idle' && <span>v{currentCheckpointIndex + 1}</span>}
+                        {editedTitle || "Untitled Document"}
+                      </span>
+                      <div className="w-16 shrink-0 flex justify-end">
+                        <span className="text-[10px] font-bold opacity-40 uppercase tracking-widest text-right">
+                          {saveStatus === 'saving' && "..."}
+                          {saveStatus === 'saved' && "Saved"}
+                          {saveStatus === 'failed' && "Err"}
+                          {saveStatus === 'idle' && `v${currentCheckpointIndex + 1}`}
                         </span>
                       </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 shrink-0">
-                      <button
-                        onClick={handleCopy}
-                        className={cn("p-2 rounded-xl transition-all cursor-pointer hover:scale-105 active:scale-95", theme === 'light' ? "hover:bg-neutral-100 text-neutral-500" : "hover:bg-neutral-800 text-neutral-400")}
-                        title="Copy Content"
-                      >
-                        {copied ? <Check size={16} className="text-emerald-500" /> : <Copy size={16} />}
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-
-              {/* Main Content Area */}
-              <div 
-                ref={scrollContainerRef}
-                onClick={handleDocumentTap}
-                className="flex-1 overflow-y-auto px-6 sm:px-12 py-8 sm:py-12 scroll-smooth select-text relative"
-              >
-                <div className="max-w-[800px] mx-auto">
-                  {!activeDocument && activeDocument !== "" && !loadError ? (
-                    <div className="flex flex-col items-center justify-center py-20 gap-3">
-                      <Sparkles className="animate-spin text-indigo-500" size={32} />
-                      <span className="text-sm opacity-50">Loading document...</span>
-                    </div>
-                  ) : loadError ? (
-                    <div className="flex flex-col items-center justify-center py-20 gap-4 text-center px-4">
-                      <div className="p-3 bg-rose-500/10 text-rose-500 rounded-full">
-                        <Info size={32} />
-                      </div>
-                      <h3 className="text-lg font-bold">Unable to load document</h3>
-                      <p className="text-sm opacity-60 max-w-xs">{loadError}</p>
-                      <button 
-                        onClick={fetchDocumentWithRetry}
-                        disabled={isRetrying}
-                        className="px-6 py-2.5 rounded-xl bg-indigo-600 text-white font-bold text-sm hover:bg-indigo-700 active:scale-95 transition-all shadow-md disabled:opacity-50"
-                      >
-                        {isRetrying ? "Retrying..." : "Retry"}
-                      </button>
                     </div>
                   ) : (
-                    <div className="space-y-6 sm:space-y-8 pb-32">
-                      <input 
-                        type="text" 
-                        value={editedTitle} 
-                        onChange={(e) => setEditedTitle(e.target.value)} 
-                        className={cn("w-full text-3xl sm:text-5xl font-black tracking-tighter px-0 bg-transparent border-none outline-none focus:ring-0 placeholder:opacity-20", theme === 'light' ? "text-neutral-900" : "text-white")} 
-                        placeholder="Document Title" 
-                        disabled={isRevisionStreaming}
-                      />
-                      <textarea
-                        ref={editorRef as any}
-                        value={isRevisionStreaming && draftDocument ? draftDocument : activeDocument}
-                        onChange={(e) => setActiveDocument(e.target.value)}
-                        placeholder="Start typing your elegant document body..."
-                        disabled={isRevisionStreaming}
-                        className={cn(
-                          "w-full min-h-[500px] sm:min-h-[700px] font-mono text-[15px] sm:text-[17px] leading-[1.6] sm:leading-[1.8] px-0 py-2 sm:py-4 bg-transparent border-none outline-none focus:ring-0 whitespace-pre-wrap transition-opacity duration-300 resize-none focus:ring-transparent focus:border-transparent focus:ring-offset-0 select-text cursor-text", 
-                          theme === 'light' ? "text-neutral-700 placeholder-neutral-400" : "text-neutral-300 placeholder-neutral-600",
-                          isRevisionStreaming && "opacity-50 cursor-not-allowed"
-                        )} 
-                      />
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Bottom Sticky Composer: Ask Changes */}
-              <div 
-                className={cn(
-                  "sticky bottom-0 left-0 right-0 z-[110] px-4 sm:px-10 py-6 sm:py-8 border-t backdrop-blur-3xl", 
-                  theme === 'light' ? "bg-white/98 border-neutral-100 shadow-[0_-20px_50px_rgba(0,0,0,0.05)]" : "bg-neutral-900/98 border-neutral-800 shadow-[0_-20px_50px_rgba(0,0,0,0.3)]"
-                )}
-              >
-                <div className="max-w-[800px] mx-auto flex flex-col gap-4 sm:gap-6">
-                  <div className="flex items-center gap-2">
-                    <button 
-                      onClick={() => {
-                        if (currentCheckpointIndex > 0) {
-                          const prevIdx = currentCheckpointIndex - 1;
-                          setCurrentCheckpointIndex(prevIdx);
-                          setActiveDocument(checkpoints[prevIdx]);
-                        }
-                      }}
-                      disabled={currentCheckpointIndex === 0}
-                      className={cn(
-                        "p-3 rounded-2xl transition-all active:scale-90 shrink-0 cursor-pointer",
-                        theme === 'light' ? "bg-neutral-100 text-neutral-600" : "bg-neutral-800 text-neutral-400",
-                        currentCheckpointIndex === 0 && "opacity-30 cursor-not-allowed"
-                      )}
-                      title="Undo"
-                    >
-                      <RotateCcw size={18} />
-                    </button>
-                    <button 
-                      onClick={() => {
-                        if (currentCheckpointIndex < checkpoints.length - 1) {
-                          const nextIdx = currentCheckpointIndex + 1;
-                          setCurrentCheckpointIndex(nextIdx);
-                          setActiveDocument(checkpoints[nextIdx]);
-                        }
-                      }}
-                      disabled={currentCheckpointIndex === checkpoints.length - 1}
-                      className={cn(
-                        "p-3 rounded-2xl transition-all active:scale-90 shrink-0 cursor-pointer",
-                        theme === 'light' ? "bg-neutral-100 text-neutral-600" : "bg-neutral-800 text-neutral-400",
-                        currentCheckpointIndex === checkpoints.length - 1 && "opacity-30 cursor-not-allowed"
-                      )}
-                      title="Redo"
-                    >
-                      <RotateCw size={18} />
-                    </button>
-                    <form onSubmit={handleAskChanges} className="relative flex-1">
-                      <input 
-                        type="text" 
-                        value={docChangePrompt} 
-                        onChange={(e) => setDocChangePrompt(e.target.value)} 
-                        placeholder="Ask changes..." 
-                        disabled={isRevisionStreaming} 
-                        className={cn(
-                          "w-full pl-6 sm:pl-8 pr-20 sm:pr-24 py-4 sm:py-5 rounded-2xl sm:rounded-[24px] border-2 text-[14px] sm:text-[16px] font-bold outline-none transition-all duration-500", 
-                          theme === 'light' ? "bg-neutral-50 border-neutral-100 focus:border-indigo-500 focus:bg-white text-neutral-900" : "bg-neutral-800 border-neutral-800 focus:border-indigo-500 focus:bg-neutral-900 text-white"
-                        )} 
-                      />
-                      <div className="absolute right-2 sm:right-3 top-1/2 -translate-y-1/2">
-                        {isRevisionStreaming ? (
-                          <button type="button" onClick={handleStopStreaming} className="flex items-center gap-1 sm:gap-2 px-4 sm:px-6 py-2 sm:py-2.5 rounded-[14px] sm:rounded-[18px] bg-rose-600 text-white text-[10px] sm:text-[12px] font-black uppercase tracking-widest shadow-xl active:scale-90 transition-all cursor-pointer"><StopCircle size={14} /> Stop</button>
-                        ) : (
-                          <button type="submit" disabled={!docChangePrompt.trim()} className={cn("flex items-center gap-1 sm:gap-2 px-4 sm:px-6 py-2 sm:py-2.5 rounded-[14px] sm:rounded-[18px] text-[10px] sm:text-[12px] font-black uppercase tracking-widest transition-all cursor-pointer", docChangePrompt.trim() ? "bg-indigo-600 text-white hover:bg-indigo-700 shadow-xl active:scale-95" : "bg-neutral-200 dark:bg-neutral-800 text-neutral-400 cursor-not-allowed")}>
-                            <Send size={14} /> Send
-                          </button>
-                        )}
+                    <>
+                      <div className="flex items-center gap-3 overflow-hidden">
+                        <button 
+                          onClick={handleStopEditing}
+                          className={cn(
+                            "p-2 rounded-full transition-all cursor-pointer",
+                            theme === 'light' ? "hover:bg-neutral-100 text-neutral-500" : "hover:bg-neutral-800 text-neutral-400"
+                          )}
+                        >
+                          <X size={20} />
+                        </button>
+                        <div className={cn(
+                          "p-2 rounded-xl shrink-0",
+                          theme === 'light' ? "bg-indigo-50 text-indigo-600 shadow-sm" : "bg-indigo-500/10 text-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.1)]"
+                        )}>
+                          <FileText size={20} />
+                        </div>
+                        <div className="flex flex-col overflow-hidden">
+                          <span className={cn(
+                            "font-sans font-extrabold text-[15px] tracking-tight truncate",
+                            theme === 'light' ? "text-neutral-900" : "text-neutral-100"
+                          )}>
+                            {editedTitle || "Untitled Document"}
+                          </span>
+                          <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest opacity-40">
+                            {saveStatus === 'saving' && <span className="flex items-center gap-1"><Sparkles size={10} className="animate-spin" /> Saving...</span>}
+                            {saveStatus === 'saved' && <span className="flex items-center gap-1 text-emerald-500"><Check size={10} /> Saved to Supabase</span>}
+                            {saveStatus === 'failed' && <span className="flex items-center gap-1 text-rose-500">Failed</span>}
+                            {saveStatus === 'idle' && <span>v{currentCheckpointIndex + 1}</span>}
+                          </span>
+                        </div>
                       </div>
-                    </form>
-                  </div>
-                  
-                  {validationState && !validationState.isValid && (
-                    <div className="px-4 sm:px-6 py-3 sm:py-4 bg-rose-500/5 border border-rose-500/10 rounded-[16px] sm:rounded-[20px] flex items-center gap-3 sm:gap-4 animate-in fade-in duration-500">
-                      <Info size={18} className="text-rose-500 shrink-0" />
-                      <span className="text-[12px] sm:text-[13px] font-bold text-rose-600/80">{validationState.message}</span>
-                    </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={handleCopy}
+                          className={cn("p-2 rounded-xl transition-all cursor-pointer hover:scale-105 active:scale-95", theme === 'light' ? "hover:bg-neutral-100 text-neutral-500" : "hover:bg-neutral-800 text-neutral-400")}
+                          title="Copy Content"
+                        >
+                          {copied ? <Check size={16} className="text-emerald-500" /> : <Copy size={16} />}
+                        </button>
+                      </div>
+                    </>
                   )}
                 </div>
-              </div>
-            </motion.div>
-          </>, document.body)}
-      </AnimatePresence>
+
+                {/* Main Content Area */}
+                <EditorErrorBoundary>
+                  <div 
+                    ref={scrollContainerRef}
+                    onClick={handleDocumentTap}
+                    className="flex-1 overflow-y-auto px-6 sm:px-12 py-8 sm:py-12 scroll-smooth select-text relative"
+                  >
+                    {(() => {
+                      console.log("[EDITOR CONTENT RENDER] Checking state before render", { hasActiveDoc: !!activeDocument, isStreaming: isRevisionStreaming, loadError });
+                      return null;
+                    })()}
+                    <div className="max-w-[800px] mx-auto">
+                      {!activeDocument && activeDocument !== "" && !loadError ? (
+                        <div className="flex flex-col items-center justify-center py-20 gap-3">
+                          <Sparkles className="animate-spin text-indigo-500" size={32} />
+                          <span className="text-sm opacity-50">Loading document...</span>
+                        </div>
+                      ) : loadError ? (
+                        <div className="flex flex-col items-center justify-center py-20 gap-4 text-center px-4">
+                          <div className="p-3 bg-rose-500/10 text-rose-500 rounded-full">
+                            <Info size={32} />
+                          </div>
+                          <h3 className="text-lg font-bold">Unable to load document</h3>
+                          <p className="text-sm opacity-60 max-w-xs">{loadError}</p>
+                          <button 
+                            onClick={fetchDocumentWithRetry}
+                            disabled={isRetrying}
+                            className="px-6 py-2.5 rounded-xl bg-indigo-600 text-white font-bold text-sm hover:bg-indigo-700 active:scale-95 transition-all shadow-md disabled:opacity-50"
+                          >
+                            {isRetrying ? "Retrying..." : "Retry"}
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="space-y-6 sm:space-y-8 pb-32">
+                          <input 
+                            type="text" 
+                            value={editedTitle} 
+                            onChange={(e) => setEditedTitle(e.target.value)} 
+                            className={cn("w-full text-3xl sm:text-5xl font-black tracking-tighter px-0 bg-transparent border-none outline-none focus:ring-0 placeholder:opacity-20", theme === 'light' ? "text-neutral-900" : "text-white")} 
+                            placeholder="Document Title" 
+                            disabled={isRevisionStreaming}
+                          />
+                          <textarea
+                            ref={editorRef as any}
+                            value={isRevisionStreaming && draftDocument ? draftDocument : activeDocument}
+                            onChange={(e) => setActiveDocument(e.target.value)}
+                            placeholder="Start typing your elegant document body..."
+                            disabled={isRevisionStreaming}
+                            className={cn(
+                              "w-full min-h-[500px] sm:min-h-[700px] font-mono text-[15px] sm:text-[17px] leading-[1.6] sm:leading-[1.8] px-0 py-2 sm:py-4 bg-transparent border-none outline-none focus:ring-0 whitespace-pre-wrap transition-opacity duration-300 resize-none focus:ring-transparent focus:border-transparent focus:ring-offset-0 select-text cursor-text", 
+                              theme === 'light' ? "text-neutral-700 placeholder-neutral-400" : "text-neutral-300 placeholder-neutral-600",
+                              isRevisionStreaming && "opacity-50 cursor-not-allowed"
+                            )} 
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </EditorErrorBoundary>
+
+                {/* Bottom Sticky Composer: Ask Changes */}
+                <div 
+                  className={cn(
+                    "sticky bottom-0 left-0 right-0 z-[110] px-4 sm:px-10 py-6 sm:py-8 border-t backdrop-blur-3xl", 
+                    theme === 'light' ? "bg-white/98 border-neutral-100 shadow-[0_-20px_50px_rgba(0,0,0,0.05)]" : "bg-neutral-900/98 border-neutral-800 shadow-[0_-20px_50px_rgba(0,0,0,0.3)]"
+                  )}
+                >
+                  <div className="max-w-[800px] mx-auto flex flex-col gap-4 sm:gap-6">
+                    <div className="flex items-center gap-2">
+                      <button 
+                        onClick={() => {
+                          if (currentCheckpointIndex > 0) {
+                            const prevIdx = currentCheckpointIndex - 1;
+                            setCurrentCheckpointIndex(prevIdx);
+                            setActiveDocument(checkpoints[prevIdx]);
+                          }
+                        }}
+                        disabled={currentCheckpointIndex === 0}
+                        className={cn(
+                          "p-3 rounded-2xl transition-all active:scale-90 shrink-0 cursor-pointer",
+                          theme === 'light' ? "bg-neutral-100 text-neutral-600" : "bg-neutral-800 text-neutral-400",
+                          currentCheckpointIndex === 0 && "opacity-30 cursor-not-allowed"
+                        )}
+                        title="Undo"
+                      >
+                        <RotateCcw size={18} />
+                      </button>
+                      <button 
+                        onClick={() => {
+                          if (currentCheckpointIndex < checkpoints.length - 1) {
+                            const nextIdx = currentCheckpointIndex + 1;
+                            setCurrentCheckpointIndex(nextIdx);
+                            setActiveDocument(checkpoints[nextIdx]);
+                          }
+                        }}
+                        disabled={currentCheckpointIndex === checkpoints.length - 1}
+                        className={cn(
+                          "p-3 rounded-2xl transition-all active:scale-90 shrink-0 cursor-pointer",
+                          theme === 'light' ? "bg-neutral-100 text-neutral-600" : "bg-neutral-800 text-neutral-400",
+                          currentCheckpointIndex === checkpoints.length - 1 && "opacity-30 cursor-not-allowed"
+                        )}
+                        title="Redo"
+                      >
+                        <RotateCw size={18} />
+                      </button>
+                      <form onSubmit={handleAskChanges} className="relative flex-1">
+                        <input 
+                          type="text" 
+                          value={docChangePrompt} 
+                          onChange={(e) => setDocChangePrompt(e.target.value)} 
+                          placeholder="Ask changes..." 
+                          disabled={isRevisionStreaming} 
+                          className={cn(
+                            "w-full pl-6 sm:pl-8 pr-20 sm:pr-24 py-4 sm:py-5 rounded-2xl sm:rounded-[24px] border-2 text-[14px] sm:text-[16px] font-bold outline-none transition-all duration-500", 
+                            theme === 'light' ? "bg-neutral-50 border-neutral-100 focus:border-indigo-500 focus:bg-white text-neutral-900" : "bg-neutral-800 border-neutral-800 focus:border-indigo-500 focus:bg-neutral-900 text-white"
+                          )} 
+                        />
+                        <div className="absolute right-2 sm:right-3 top-1/2 -translate-y-1/2">
+                          {isRevisionStreaming ? (
+                            <button type="button" onClick={handleStopStreaming} className="flex items-center gap-1 sm:gap-2 px-4 sm:px-6 py-2 sm:py-2.5 rounded-[14px] sm:rounded-[18px] bg-rose-600 text-white text-[10px] sm:text-[12px] font-black uppercase tracking-widest shadow-xl active:scale-90 transition-all cursor-pointer"><StopCircle size={14} /> Stop</button>
+                          ) : (
+                            <button type="submit" disabled={!docChangePrompt.trim()} className={cn("flex items-center gap-1 sm:gap-2 px-4 sm:px-6 py-2 sm:py-2.5 rounded-[14px] sm:rounded-[18px] text-[10px] sm:text-[12px] font-black uppercase tracking-widest transition-all cursor-pointer", docChangePrompt.trim() ? "bg-indigo-600 text-white hover:bg-indigo-700 shadow-xl active:scale-95" : "bg-neutral-200 dark:bg-neutral-800 text-neutral-400 cursor-not-allowed")}>
+                              <Send size={14} /> Send
+                            </button>
+                          )}
+                        </div>
+                      </form>
+                    </div>
+                    
+                    {validationState && !validationState.isValid && (
+                      <div className="px-4 sm:px-6 py-3 sm:py-4 bg-rose-500/5 border border-rose-500/10 rounded-[16px] sm:rounded-[20px] flex items-center gap-3 sm:gap-4 animate-in fade-in duration-500">
+                        <Info size={18} className="text-rose-500 shrink-0" />
+                        <span className="text-[12px] sm:text-[13px] font-bold text-rose-600/80">{validationState.message}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </motion.div>
+            </>
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
     </>
   );
 }

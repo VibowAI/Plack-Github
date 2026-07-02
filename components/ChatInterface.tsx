@@ -4949,6 +4949,14 @@ export default function ChatInterface() {
                                   )}
                                   
                                   {parsedDoc.hasDocument && (
+                                    (() => {
+                                      if (activeDocumentEditorId === resolvedDocId) {
+                                        console.log("[EDITOR MATCH FOUND] activeDocumentEditorId matches resolvedDocId", { activeDocumentEditorId, resolvedDocId });
+                                      }
+                                      return null;
+                                    })()
+                                  )}
+                                  {parsedDoc.hasDocument && (
                                     <InlineDocumentBlock 
                                       id={resolvedDocId}
                                       userId={session?.user?.id}
